@@ -1,0 +1,217 @@
+:root {
+  --bg: #16181d;
+  --bg-panel: #1d2026;
+  --bg-toolbar: #22262e;
+  --border: #2e333d;
+  --text: #d7dae0;
+  --text-dim: #8a90a0;
+  --accent: #4f8ef7;
+  --accent-2: #2563eb;
+  --error: #f87171;
+  --ok: #4ade80;
+  --table-bg: #232730;
+  --table-row-alt: #262b35;
+  --edge: #5b6372;
+  --edge-hi: #4f8ef7;
+  font-size: 14px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  overflow: hidden;
+}
+
+/* ---------- Toolbar ---------- */
+#toolbar {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  height: 46px;
+  padding: 0 14px;
+  background: var(--bg-toolbar);
+  border-bottom: 1px solid var(--border);
+}
+
+.brand {
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.4px;
+  color: var(--accent);
+}
+.brand span { color: var(--text); font-weight: 400; }
+
+.toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.toolbar-group:nth-of-type(2) { flex: 1; justify-content: center; }
+
+#toolbar button {
+  background: #2b303a;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 11px;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+#toolbar button:hover { background: #353b47; }
+
+#zoom-level {
+  min-width: 44px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+#search {
+  width: 280px;
+  background: #14161b;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 6px 10px;
+  font-size: 13px;
+  outline: none;
+}
+#search:focus { border-color: var(--accent); }
+
+/* ---------- Layout ---------- */
+#app {
+  display: flex;
+  height: calc(100% - 46px);
+}
+
+#editor-pane {
+  width: 340px;
+  min-width: 200px;
+  max-width: 60vw;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
+}
+
+.pane-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+}
+
+.status { font-size: 12px; }
+.status.ok { color: var(--ok); }
+.status.err { color: var(--error); }
+
+#editor {
+  flex: 1;
+  width: 100%;
+  resize: none;
+  border: none;
+  outline: none;
+  background: var(--bg-panel);
+  color: var(--text);
+  font-family: "SF Mono", Menlo, Monaco, "Courier New", monospace;
+  font-size: 12.5px;
+  line-height: 1.55;
+  padding: 12px;
+  tab-size: 2;
+}
+
+#errors {
+  max-height: 140px;
+  overflow-y: auto;
+  font-family: "SF Mono", Menlo, monospace;
+  font-size: 11.5px;
+  color: var(--error);
+  border-top: 1px solid var(--border);
+}
+#errors:empty { display: none; }
+#errors div { padding: 4px 12px; border-bottom: 1px solid #2a2025; }
+
+#splitter {
+  width: 5px;
+  cursor: col-resize;
+  background: transparent;
+  flex-shrink: 0;
+}
+#splitter:hover { background: var(--accent-2); }
+
+#diagram-pane {
+  position: relative;
+  flex: 1;
+  overflow: hidden;
+}
+
+#diagram {
+  position: absolute;
+  inset: 0;
+}
+
+#diagram svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  background:
+    radial-gradient(circle, #2a2e38 1px, transparent 1px) 0 0 / 24px 24px,
+    var(--bg);
+}
+
+#hint {
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 11.5px;
+  color: var(--text-dim);
+  background: rgba(29, 32, 38, 0.85);
+  padding: 5px 14px;
+  border-radius: 14px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* ---------- Focus banner ---------- */
+#focus-banner {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: #1c2433;
+  border: 1px solid var(--accent-2);
+  border-radius: 8px;
+  padding: 7px 14px;
+  font-size: 13px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+#focus-banner.hidden { display: none; }
+#focus-banner b { color: var(--accent); }
+#btn-clear-focus {
+  background: var(--accent-2);
+  border: none;
+  color: #fff;
+  border-radius: 5px;
+  padding: 4px 11px;
+  font-size: 12px;
+  cursor: pointer;
+}
+#btn-clear-focus:hover { background: var(--accent); }

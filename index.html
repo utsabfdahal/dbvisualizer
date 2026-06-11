@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>DBML Visualizer</title>
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <header id="toolbar">
+    <div class="brand">DB<span>Visualizer</span></div>
+    <div class="toolbar-group">
+      <button id="btn-layout" title="Auto-arrange tables">Auto Layout</button>
+      <button id="btn-fit" title="Fit diagram to screen">Fit</button>
+      <button id="btn-zoom-out" title="Zoom out">−</button>
+      <span id="zoom-level">100%</span>
+      <button id="btn-zoom-in" title="Zoom in">+</button>
+    </div>
+    <div class="toolbar-group">
+      <input id="search" type="text" placeholder="Search table… (Enter to focus)" list="table-list" />
+      <datalist id="table-list"></datalist>
+    </div>
+    <div class="toolbar-group">
+      <button id="btn-export-svg" title="Download diagram as SVG">Export SVG</button>
+      <button id="btn-export-png" title="Download diagram as PNG">Export PNG</button>
+      <button id="btn-sample" title="Load sample schema">Sample</button>
+    </div>
+  </header>
+
+  <main id="app">
+    <section id="editor-pane">
+      <div class="pane-title">DBML
+        <span id="parse-status" class="status ok">✓</span>
+      </div>
+      <textarea id="editor" spellcheck="false" placeholder="Write DBML here…"></textarea>
+      <div id="errors"></div>
+    </section>
+
+    <div id="splitter"></div>
+
+    <section id="diagram-pane">
+      <div id="focus-banner" class="hidden">
+        <span id="focus-text"></span>
+        <button id="btn-clear-focus">Show all</button>
+      </div>
+      <div id="diagram"></div>
+      <div id="hint">Click a table to focus its relations · Esc or double-click background to show all · Drag tables · Scroll to zoom</div>
+    </section>
+  </main>
+
+  <script src="js/parser.js"></script>
+  <script src="js/layout.js"></script>
+  <script src="js/diagram.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
