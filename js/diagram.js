@@ -109,6 +109,9 @@
       if (self._adj[t.key]) delete self._adj[t.key][t.key];
     });
 
+    // compute centrality scores
+    this._computeCentrality();
+
     // drop positions of removed tables; keep existing ones
     var valid = {};
     model.tables.forEach(function (t) { valid[t.key] = true; });
@@ -149,6 +152,45 @@
       });
     }
     this.render();
+  };
+
+  // ---------- centrality ----------
+
+  Diagram.prototype._computeCentrality = function () {
+    var self = this;
+    this._centrality = {};
+    this.model.tables.forEach(function (t) {
+      self._centrality[t.key] = { incoming: 0, outgoing: 0, serviceUsage: 0, controllerUsage: 0, score: 0 };
+    });
+    this.model.refs.forEach(function (r) {
+      var fk = r.from.table, ref = r.to.table;
+      if (r.op === '>') {
+        if (self._centrality[fk]) self._centrality[fk].outgoing++;
+        if (self._centrality[ref]) self._centrality[ref].incoming++;
+      } else if (r.op === '<') {
+        if (self._centrality[ref]) self._centrality[ref].outgoing++;
+        if (self._centrality[fk]) self._centrality[fk].incoming++;
+      } else {
+        if (self._centrality[fk]) self._centrality[fk].outgoing++;
+        if (self._centrality[ref]) self._centrality[ref].incoming++;
+      }
+    });
+    this.model.tables.forEach(function (t) {
+      var s = t.settings || {};
+      var su = parseInt(s.service_usage || '0', 10) || 0;
+      var cu = parseInt(s.controller_usage || '0', 10) || 0;
+      var c = self._centrality[t.key];
+      c.serviceUsage = su;
+      c.controllerUsage = cu;
+      c.score = c.incoming + c.outgoing + c.serviceUsage + c.controllerUsage;
+    });
+  };
+
+  Diagram.prototype._centralityColor = function (score) {
+    if (score >= 8) return '#e3b341';
+    if (score >= 5) return '#d4641c';
+    if (score >= 3) return '#2f6feb';
+    return '#5b6372';
   };
 
   Diagram.prototype._sizeOf = function (t) {
@@ -269,13 +311,21 @@
       tt.textContent = t.name + ' — ' + t.note;
     }
 
-    // relation count badge
-    var relCount = this.relatedTables(t.key).length;
-    if (relCount > 0) {
-      var bw = 22;
-      el('rect', { class: 'badge', x: g.w - bw - 8, y: 9, width: bw, height: 16, rx: 8, fill: 'rgba(0,0,0,0.28)' }, grp);
-      var bt = el('text', { class: 'badge-text', x: g.w - bw / 2 - 8, y: 20.5, 'text-anchor': 'middle', fill: 'rgba(255,255,255,0.85)' }, grp);
-      bt.textContent = String(relCount);
+    // centrality score badge
+    var cent = (this._centrality && this._centrality[t.key]) || { score: 0, incoming: 0, outgoing: 0, serviceUsage: 0, controllerUsage: 0 };
+    if (cent.score > 0) {
+      var label = String(cent.score);
+      var bw = Math.max(22, measure(label, '600 9px sans-serif') + 12);
+      var centColor = this._centralityColor(cent.score);
+      el('rect', { class: 'badge', x: g.w - bw - 8, y: 9, width: bw, height: 16, rx: 8, fill: centColor, opacity: 0.85 }, grp);
+      var bt = el('text', { class: 'badge-text', x: g.w - bw / 2 - 8, y: 20.5, 'text-anchor': 'middle', fill: '#fff' }, grp);
+      bt.textContent = label;
+      var centTip = el('title', null, bt.parentNode ? grp : bt);
+      centTip.textContent = 'Centrality: ' + cent.score +
+        '\nIncoming FKs: ' + cent.incoming +
+        '\nOutgoing FKs: ' + cent.outgoing +
+        '\nService usage: ' + cent.serviceUsage +
+        '\nController usage: ' + cent.controllerUsage;
     }
 
     // rows
