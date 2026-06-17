@@ -630,9 +630,10 @@
       if (refdT === key && fkT !== key) incoming[fkT] = true;
       if (fkT === key && refdT !== key) outgoing[refdT] = true;
     });
-    // tables related in both directions: show once, on the left
-    Object.keys(incoming).forEach(function (k) {
-      if (outgoing[k]) delete outgoing[k];
+    // tables related in both directions (referencing AND referenced by the
+    // focused table): show once, on the right — no matter what
+    Object.keys(outgoing).forEach(function (k) {
+      if (incoming[k]) delete incoming[k];
     });
 
     function toItem(k) {
