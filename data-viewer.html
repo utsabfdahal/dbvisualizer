@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Table Data Viewer</title>
+<link rel="stylesheet" href="css/data-viewer.css" />
+</head>
+<body>
+  <header id="toolbar">
+    <div class="brand"><a href="index.html">DB<span>Visualizer</span></a></div>
+    <div class="toolbar-group">
+      <label id="import-label" for="file-input" title="Import .sql file">
+        Import SQL
+        <input id="file-input" type="file" accept=".sql" />
+      </label>
+    </div>
+    <div class="toolbar-group search-group">
+      <input id="table-search" type="text" placeholder="Search table…" list="table-list" autocomplete="off" />
+      <datalist id="table-list"></datalist>
+    </div>
+    <div class="toolbar-group">
+      <button id="btn-export-csv" title="Export current table as CSV" disabled>Export CSV</button>
+    </div>
+    <div class="nav-link"><a href="index.html">← Schema Visualizer</a></div>
+  </header>
+
+  <main id="app">
+    <!-- Sidebar: table list -->
+    <aside id="sidebar">
+      <div class="sidebar-title">Tables <span id="table-count">0</span></div>
+      <ul id="table-nav"></ul>
+    </aside>
+
+    <!-- Main content: data grid -->
+    <section id="content">
+      <div id="empty-state">
+        <div class="empty-icon">📂</div>
+        <p>Import a <strong>.sql</strong> file to view table data</p>
+        <p class="hint">Supports MySQL / MariaDB dump files with CREATE TABLE + INSERT statements</p>
+      </div>
+
+      <div id="table-view" class="hidden">
+        <div id="table-header">
+          <h2 id="table-name"></h2>
+          <div id="table-meta">
+            <span id="row-count"></span>
+            <span id="col-count"></span>
+          </div>
+        </div>
+
+        <div id="table-filters">
+          <input id="data-search" type="text" placeholder="Filter rows… (searches all columns)" />
+          <div id="pagination">
+            <button id="btn-prev" disabled>‹ Prev</button>
+            <span id="page-info">Page 1 of 1</span>
+            <button id="btn-next" disabled>Next ›</button>
+            <select id="page-size">
+              <option value="25">25 rows</option>
+              <option value="50" selected>50 rows</option>
+              <option value="100">100 rows</option>
+              <option value="500">500 rows</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="grid-wrapper">
+          <table id="data-grid">
+            <thead><tr id="grid-head"></tr></thead>
+            <tbody id="grid-body"></tbody>
+          </table>
+        </div>
+
+        <div id="table-footer">
+          <span id="showing-info"></span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="js/sql-data-parser.js"></script>
+  <script src="js/data-viewer.js"></script>
+</body>
+</html>
