@@ -60,7 +60,18 @@ The sample is meant to be large enough to expose visual clutter first, then show
 
 ## How to use
 
-Open `index.html` through a local web server or a hosted static site.
+Simply go to [visualize.utsabd.com.np](https://visualize.utsabd.com.np) and start exploring the schema.
+
+From there:
+
+1. Click Sample to load the showcase schema.
+2. Click Auto Layout if you want to rearrange the diagram again.
+3. Use the search box to find a table by name.
+4. Click a table to focus on its direct relationships.
+5. Press Escape or double-click the background to return to the full schema.
+6. Export the diagram as SVG or PNG when needed.
+
+For local development, open `index.html` through a local web server.
 
 Using a local server is recommended because the Sample button fetches `schema.dbml`. Opening the file directly with `file://` may cause the browser to block that request.
 
@@ -75,15 +86,6 @@ Then open:
 ```text
 http://localhost:8080
 ```
-
-From there:
-
-1. Click Sample to load the showcase schema.
-2. Click Auto Layout if you want to rearrange the diagram again.
-3. Use the search box to find a table by name.
-4. Click a table to focus on its direct relationships.
-5. Press Escape or double-click the background to return to the full schema.
-6. Export the diagram as SVG or PNG when needed.
 
 ## Data viewer
 
