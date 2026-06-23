@@ -1,5 +1,7 @@
 # DBVisualizer
 
+Live site: [visualize.utsabd.com.np](https://visualize.utsabd.com.np)
+
 DBVisualizer is a browser-based database schema visualizer for DBML. It is designed for exploring large, relationship-heavy schemas without needing a backend service, build step, or external database connection.
 
 The app is especially useful when a schema is too large to understand from raw DBML alone. It gives you a full-canvas overview, lets you inspect relationships in place, and can focus on a single table so the important connections stand out from the noise.
