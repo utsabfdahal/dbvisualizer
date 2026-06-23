@@ -41,10 +41,15 @@
     return parseInt(pageSizeEl.value, 10) || 50;
   }
 
-  // ---- Cached files (localStorage) ----
+  // ---- Cached files: metadata in localStorage, contents in IndexedDB ----
+  // localStorage keeps only tiny metadata (so it never hits the ~5MB quota);
+  // the SQL text itself lives in IndexedDB, which handles much larger files.
   var LS_INDEX  = 'dbv.dv.index';    // [{ id, name, size, addedAt }]
   var LS_ACTIVE = 'dbv.dv.active';   // active file id
-  var LS_FILE   = 'dbv.dv.file.';    // per-file SQL text, keyed by id
+  var LS_FILE   = 'dbv.dv.file.';    // legacy localStorage blobs (migrated to IDB)
+
+  var IDB_NAME  = 'dbv-dataviewer';
+  var IDB_STORE = 'files';
 
   function readIndex() {
     try { return JSON.parse(localStorage.getItem(LS_INDEX)) || []; }
@@ -62,11 +67,75 @@
       else localStorage.setItem(LS_ACTIVE, id);
     } catch (e) { /* ignore */ }
   }
-  function readFileSQL(id) {
-    try { return localStorage.getItem(LS_FILE + id); } catch (e) { return null; }
+
+  // ---- IndexedDB plumbing ----
+  var dbPromise = null;
+  function getDB() {
+    if (!window.indexedDB) return Promise.reject(new Error('IndexedDB unavailable'));
+    if (dbPromise) return dbPromise;
+    dbPromise = new Promise(function (resolve, reject) {
+      var req = indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = function () {
+        var db = req.result;
+        if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
+      };
+      req.onsuccess = function () { resolve(req.result); };
+      req.onerror = function () { reject(req.error); };
+    });
+    return dbPromise;
+  }
+  function idbPut(id, sql) {
+    return getDB().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction(IDB_STORE, 'readwrite');
+        tx.objectStore(IDB_STORE).put(sql, id);
+        tx.oncomplete = function () { resolve(); };
+        tx.onerror = function () { reject(tx.error); };
+        tx.onabort = function () { reject(tx.error || new Error('IndexedDB write aborted')); };
+      });
+    });
+  }
+  function idbGet(id) {
+    return getDB().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction(IDB_STORE, 'readonly');
+        var req = tx.objectStore(IDB_STORE).get(id);
+        req.onsuccess = function () { resolve(req.result != null ? req.result : null); };
+        req.onerror = function () { reject(req.error); };
+      });
+    });
+  }
+  function idbDelete(id) {
+    return getDB().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction(IDB_STORE, 'readwrite');
+        tx.objectStore(IDB_STORE).delete(id);
+        tx.oncomplete = function () { resolve(); };
+        tx.onerror = function () { reject(tx.error); };
+      });
+    });
   }
 
-  // Save (or replace by name) a file in the cache. Returns its id, or null on failure.
+  function readFileAsText(file) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function (e) { resolve(e.target.result); };
+      reader.onerror = function () { reject(reader.error || new Error('Could not read file')); };
+      reader.readAsText(file);
+    });
+  }
+
+  // Read a file's SQL (IndexedDB first, falling back to any legacy localStorage blob).
+  function readFileSQL(id) {
+    function legacy() {
+      try { return localStorage.getItem(LS_FILE + id); } catch (e) { return null; }
+    }
+    return idbGet(id).then(function (sql) {
+      return sql != null ? sql : legacy();
+    }, function () { return legacy(); });
+  }
+
+  // Save (or replace by name) a file. Resolves with its id, or null if it couldn't be stored.
   function cacheFile(name, sql) {
     var idx = readIndex();
     var existing = null;
@@ -75,26 +144,41 @@
     }
     var id = existing ? existing.id
       : ('f' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36));
-    try {
-      localStorage.setItem(LS_FILE + id, sql);
-    } catch (e) {
-      return null; // quota exceeded
-    }
-    if (existing) {
-      existing.size = sql.length;
-      existing.addedAt = Date.now();
-    } else {
-      idx.push({ id: id, name: name, size: sql.length, addedAt: Date.now() });
-    }
-    writeIndex(idx);
-    return id;
+    return idbPut(id, sql).then(function () {
+      if (existing) {
+        existing.size = sql.length;
+        existing.addedAt = Date.now();
+      } else {
+        idx.push({ id: id, name: name, size: sql.length, addedAt: Date.now() });
+      }
+      writeIndex(idx);
+      return id;
+    }, function (e) {
+      console.error('Could not cache file', name, e);
+      return null;
+    });
   }
 
+  // Remove a cached file. Resolves with the remaining index.
   function removeCachedFile(id) {
     var idx = readIndex().filter(function (f) { return f.id !== id; });
     writeIndex(idx);
     try { localStorage.removeItem(LS_FILE + id); } catch (e) { /* ignore */ }
-    return idx;
+    return idbDelete(id).then(function () { return idx; }, function () { return idx; });
+  }
+
+  // One-time migration: move legacy localStorage blobs into IndexedDB and free the space.
+  function migrateLegacyFiles() {
+    if (!window.indexedDB) return Promise.resolve();
+    var jobs = readIndex().map(function (f) {
+      var legacy = null;
+      try { legacy = localStorage.getItem(LS_FILE + f.id); } catch (e) { /* ignore */ }
+      if (legacy == null) return Promise.resolve();
+      return idbPut(f.id, legacy).then(function () {
+        try { localStorage.removeItem(LS_FILE + f.id); } catch (e) { /* ignore */ }
+      }, function () { /* ignore */ });
+    });
+    return Promise.all(jobs).catch(function () {});
   }
 
   function refreshFilePicker() {
@@ -133,35 +217,35 @@
     var files = Array.prototype.slice.call(fileInput.files || []);
     if (!files.length) return;
 
-    var pending = files.length;
-    var lastCachedId = null;
+    var lastId = null;
     var lastSQL = null;
-    var uncached = false;
 
+    // Process files one at a time to keep memory bounded for large dumps.
+    var chain = Promise.resolve();
     files.forEach(function (file) {
-      var reader = new FileReader();
-      reader.onload = function (e) {
-        var sql = e.target.result;
-        lastSQL = sql;
-        var id = cacheFile(file.name, sql);
-        if (id) lastCachedId = id;
-        else uncached = true;
+      chain = chain.then(function () {
+        return readFileAsText(file).then(function (sql) {
+          lastSQL = sql;
+          return cacheFile(file.name, sql).then(function (id) {
+            if (id) lastId = id;
+          });
+        });
+      });
+    });
 
-        if (--pending === 0) {
-          refreshFilePicker();
-          if (lastCachedId) {
-            setActiveId(lastCachedId);
-            fileSelect.value = lastCachedId;
-            loadSQL(readFileSQL(lastCachedId));
-          } else {
-            loadSQL(lastSQL); // couldn't cache — load in memory only
-          }
-          if (uncached) {
-            alert('Some files were too large to cache and were loaded without saving.');
-          }
-        }
-      };
-      reader.readAsText(file);
+    chain.then(function () {
+      refreshFilePicker();
+      if (lastId) {
+        setActiveId(lastId);
+        fileSelect.value = lastId;
+        return readFileSQL(lastId).then(function (sql) {
+          loadSQL(sql != null ? sql : lastSQL);
+        });
+      }
+      if (lastSQL != null) loadSQL(lastSQL); // couldn't persist — view in memory
+    }).catch(function (err) {
+      console.error(err);
+      alert('Could not import the file: ' + (err && err.message ? err.message : err));
     });
 
     fileInput.value = ''; // allow re-importing the same file name
@@ -171,8 +255,9 @@
   fileSelect.addEventListener('change', function () {
     var id = fileSelect.value;
     setActiveId(id);
-    var sql = readFileSQL(id);
-    if (sql != null) loadSQL(sql);
+    readFileSQL(id).then(function (sql) {
+      if (sql != null) loadSQL(sql);
+    });
   });
 
   // ---- Remove the selected cached file ----
@@ -184,20 +269,22 @@
     for (var i = 0; i < idx.length; i++) { if (idx[i].id === id) { f = idx[i]; break; } }
     if (f && !confirm('Remove "' + f.name + '" from cache?')) return;
 
-    var remaining = removeCachedFile(id);
-    if (remaining.length) {
-      var nextId = remaining[0].id;
-      setActiveId(nextId);
-      refreshFilePicker();
-      fileSelect.value = nextId;
-      loadSQL(readFileSQL(nextId));
-    } else {
+    removeCachedFile(id).then(function (remaining) {
+      if (remaining.length) {
+        var nextId = remaining[0].id;
+        setActiveId(nextId);
+        refreshFilePicker();
+        fileSelect.value = nextId;
+        return readFileSQL(nextId).then(function (sql) {
+          if (sql != null) loadSQL(sql);
+        });
+      }
       setActiveId(null);
       refreshFilePicker();
       allTables = [];
       buildSidebar();
       showEmpty();
-    }
+    });
   });
 
   // ---- Import from the empty-state button ----
@@ -601,23 +688,23 @@
 
   // ---- Boot: restore cached files ----
   (function boot() {
-    refreshFilePicker();
-    var idx = readIndex();
-    if (!idx.length) { showEmpty(); return; }
+    migrateLegacyFiles().then(function () {
+      refreshFilePicker();
+      var idx = readIndex();
+      if (!idx.length) { showEmpty(); return; }
 
-    var active = getActiveId();
-    var found = false;
-    for (var i = 0; i < idx.length; i++) {
-      if (idx[i].id === active) { found = true; break; }
-    }
-    if (!found) { active = idx[0].id; setActiveId(active); }
+      var active = getActiveId();
+      var found = false;
+      for (var i = 0; i < idx.length; i++) {
+        if (idx[i].id === active) { found = true; break; }
+      }
+      if (!found) { active = idx[0].id; setActiveId(active); }
 
-    var sql = readFileSQL(active);
-    if (sql != null) {
       fileSelect.value = active;
-      loadSQL(sql);
-    } else {
-      showEmpty();
-    }
+      readFileSQL(active).then(function (sql) {
+        if (sql != null) loadSQL(sql);
+        else showEmpty();
+      });
+    });
   })();
 })();
