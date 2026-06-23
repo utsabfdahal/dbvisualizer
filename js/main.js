@@ -92,6 +92,7 @@
     "Ref: addresses.user_id > users.id",
     ""
   ].join('\n');
+  var SAMPLE_SCHEMA_URL = 'schema.dbml';
 
   var LS_SRC = 'dbv.source';
   var LS_POS = 'dbv.positions';
@@ -176,6 +177,34 @@
     });
 
     diagram.setModel(model);
+    return model;
+  }
+
+  function fetchShowcaseSample() {
+    if (!window.fetch) return Promise.resolve(SAMPLE);
+    return fetch(SAMPLE_SCHEMA_URL, { cache: 'no-store' }).then(function (res) {
+      if (!res.ok) throw new Error('Could not load ' + SAMPLE_SCHEMA_URL);
+      return res.text();
+    }).then(function (src) {
+      return src && src.trim() ? src : SAMPLE;
+    }, function (err) {
+      console.warn('Falling back to bundled sample schema.', err);
+      return SAMPLE;
+    });
+  }
+
+  function loadSampleIntoEditor(src) {
+    editor.value = src;
+    try { localStorage.removeItem(LS_POS); } catch (e) { /* ignore */ }
+    diagram.clearFocus(true);
+    diagram.savedPositions = null;
+    diagram.positions = {};
+    diagram.selected = null;
+    parseNow();
+    requestAnimationFrame(function () {
+      diagram.runAutoLayout();
+      diagram.fit();
+    });
   }
 
   // ---------- toolbar ----------
@@ -196,13 +225,17 @@
   document.getElementById('btn-clear-focus').addEventListener('click', function () {
     diagram.clearFocus();
   });
-  document.getElementById('btn-sample').addEventListener('click', function () {
+  var sampleButton = document.getElementById('btn-sample');
+  sampleButton.addEventListener('click', function () {
     if (editor.value.trim() && !confirm('Replace current DBML with the sample schema?')) return;
-    editor.value = SAMPLE;
-    localStorage.removeItem(LS_POS);
-    diagram.positions = {};
-    diagram.clearFocus(true);
-    parseNow();
+    var oldText = sampleButton.textContent;
+    sampleButton.disabled = true;
+    sampleButton.textContent = 'Loading…';
+    fetchShowcaseSample().then(function (src) {
+      loadSampleIntoEditor(src);
+      sampleButton.disabled = false;
+      sampleButton.textContent = oldText;
+    });
   });
 
   function download(name, blob) {

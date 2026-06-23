@@ -1,0 +1,2034 @@
+// OmniPlatform Showcase Schema
+// Purpose: stress-test DBVisualizer with 150+ interconnected tables, enums, table groups,
+// centrality badges, self-references, many-to-many joins, and cross-domain relations.
+
+Project omniplatform_showcase {
+  database_type: 'PostgreSQL'
+  Note: 'Multi-tenant commerce, CRM, logistics, analytics, automation, and AI platform demo schema.'
+}
+
+Enum tenant_status { trial active paused suspended closed }
+Enum user_status { invited active locked disabled deleted }
+Enum member_role { owner admin manager contributor viewer }
+Enum audit_action { create update delete login export import approve reject }
+Enum file_visibility { private tenant_public public }
+Enum entity_kind { tenant user customer product order shipment ticket campaign report automation ai_run }
+Enum channel_kind { web mobile pos marketplace social api }
+Enum product_status { draft active archived discontinued }
+Enum stock_movement_type { receive reserve release adjust transfer ship return damage cycle_count }
+Enum customer_status { lead prospect active dormant blocked }
+Enum address_type { billing shipping pickup legal }
+Enum cart_status { open converted abandoned expired }
+Enum order_status { draft pending confirmed paid packed shipped delivered cancelled refunded }
+Enum invoice_status { draft open paid void overdue }
+Enum payment_status { requires_action authorized captured failed refunded disputed cancelled }
+Enum shipment_status { pending label_created in_transit out_for_delivery delivered exception cancelled returned }
+Enum return_status { requested approved received rejected refunded closed }
+Enum campaign_status { draft scheduled running paused completed archived }
+Enum notification_status { queued sent failed read archived }
+Enum ticket_status { new open pending_customer pending_internal solved closed }
+Enum sync_status { queued running succeeded failed cancelled }
+Enum automation_status { draft enabled disabled archived }
+Enum ai_run_status { queued running completed failed cancelled }
+
+// -----------------------------------------------------------------------------
+// Identity & tenancy
+// -----------------------------------------------------------------------------
+
+Table tenants [service_usage: 18, controller_usage: 12, color: '#2f6feb'] {
+  id int [pk, increment]
+  name varchar(160) [not null]
+  slug varchar(80) [not null, unique]
+  status tenant_status [not null, default: 'trial']
+  billing_email varchar(255)
+  created_at timestamp [not null, default: `now()`]
+  Note: 'Root account for every domain object in the platform.'
+}
+
+Table tenant_domains {
+  id int [pk, increment]
+  tenant_id int [not null]
+  domain varchar(255) [not null, unique]
+  is_primary boolean [not null, default: false]
+  verified_at timestamp
+  created_at timestamp [not null, default: `now()`]
+}
+
+Table tenant_settings {
+  id int [pk, increment]
+  tenant_id int [not null]
+  setting_key varchar(120) [not null]
+  setting_value text
+  is_secret boolean [not null, default: false]
+  updated_at timestamp [not null, default: `now()`]
+}
+
+Table tenant_feature_entitlements {
+  id int [pk, increment]
+  tenant_id int [not null]
+  feature_key varchar(120) [not null]
+  limit_value int
+  enabled boolean [not null, default: true]
+  expires_at timestamp
+}
+
+Table users [service_usage: 16, controller_usage: 14, color: '#8957e5'] {
+  id int [pk, increment]
+  tenant_id int [not null]
+  email varchar(255) [not null]
+  display_name varchar(140) [not null]
+  status user_status [not null, default: 'invited']
+  last_login_at timestamp
+  created_at timestamp [not null, default: `now()`]
+  Note: 'Human or service actor used across admin, storefront, and operations workflows.'
+}
+
+Table user_profiles {
+  id int [pk, increment]
+  user_id int [not null, unique]
+  avatar_file_id int
+  locale varchar(16) [default: 'en-US']
+  timezone varchar(80)
+  phone varchar(40)
+}
+
+Table user_identities {
+  id int [pk, increment]
+  user_id int [not null]
+  provider varchar(60) [not null]
+  provider_subject varchar(255) [not null]
+  mfa_enabled boolean [not null, default: false]
+  linked_at timestamp [not null, default: `now()`]
+}
+
+Table user_sessions {
+  id int [pk, increment]
+  user_id int [not null]
+  token_hash varchar(255) [not null, unique]
+  ip_address varchar(64)
+  user_agent text
+  expires_at timestamp [not null]
+}
+
+Table api_keys {
+  id int [pk, increment]
+  tenant_id int [not null]
+  owner_user_id int
+  key_prefix varchar(32) [not null, unique]
+  name varchar(120) [not null]
+  revoked_at timestamp
+  created_at timestamp [not null, default: `now()`]
+}
+
+Table roles {
+  id int [pk, increment]
+  tenant_id int [not null]
+  name varchar(80) [not null]
+  description text
+  is_system boolean [not null, default: false]
+  created_at timestamp [not null, default: `now()`]
+}
+
+Table permissions {
+  id int [pk, increment]
+  code varchar(120) [not null, unique]
+  resource varchar(80) [not null]
+  action varchar(60) [not null]
+  description text
+}
+
+Table role_permissions {
+  role_id int [pk]
+  permission_id int [pk]
+  granted_by_user_id int
+  granted_at timestamp [not null, default: `now()`]
+}
+
+Table user_roles {
+  user_id int [pk]
+  role_id int [pk]
+  assigned_by_user_id int
+  assigned_at timestamp [not null, default: `now()`]
+}
+
+Table teams [service_usage: 5, controller_usage: 4] {
+  id int [pk, increment]
+  tenant_id int [not null]
+  parent_team_id int
+  name varchar(120) [not null]
+  handle varchar(80)
+  created_at timestamp [not null, default: `now()`]
+}
+
+Table team_members {
+  team_id int [pk]
+  user_id int [pk]
+  role member_role [not null, default: 'contributor']
+  joined_at timestamp [not null, default: `now()`]
+}
+
+Table invitations {
+  id int [pk, increment]
+  tenant_id int [not null]
+  invited_by_user_id int [not null]
+  email varchar(255) [not null]
+  role_id int
+  accepted_user_id int
+  expires_at timestamp [not null]
+}
+
+Table audit_logs [service_usage: 8, controller_usage: 2] {
+  id int [pk, increment]
+  tenant_id int [not null]
+  actor_user_id int
+  action audit_action [not null]
+  entity_kind entity_kind [not null]
+  entity_id int [not null]
+  created_at timestamp [not null, default: `now()`]
+}
+
+Table webhook_endpoints {
+  id int [pk, increment]
+  tenant_id int [not null]
+  created_by_user_id int
+  url varchar(500) [not null]
+  secret_hint varchar(80)
+  is_active boolean [not null, default: true]
+}
+
+Table webhook_deliveries {
+  id int [pk, increment]
+  endpoint_id int [not null]
+  event_id int
+  status_code int
+  attempt_count int [not null, default: 0]
+  delivered_at timestamp
+}
+
+Table files [service_usage: 7, controller_usage: 6] {
+  id int [pk, increment]
+  tenant_id int [not null]
+  uploaded_by_user_id int
+  storage_key varchar(500) [not null, unique]
+  mime_type varchar(120)
+  visibility file_visibility [not null, default: 'private']
+  created_at timestamp [not null, default: `now()`]
+}
+
+Table file_versions {
+  id int [pk, increment]
+  file_id int [not null]
+  version_no int [not null]
+  size_bytes int [not null]
+  checksum varchar(128)
+  created_at timestamp [not null, default: `now()`]
+}
+
+Table tags {
+  id int [pk, increment]
+  tenant_id int [not null]
+  name varchar(80) [not null]
+  color varchar(16)
+  created_by_user_id int
+}
+
+Table entity_tags {
+  tag_id int [pk]
+  entity_kind entity_kind [pk]
+  entity_id int [pk]
+  tagged_by_user_id int
+  tagged_at timestamp [not null, default: `now()`]
+}
+
+Table comments {
+  id int [pk, increment]
+  tenant_id int [not null]
+  parent_comment_id int
+  author_user_id int [not null]
+  entity_kind entity_kind [not null]
+  entity_id int [not null]
+  body text [not null]
+  created_at timestamp [not null, default: `now()`]
+}
+
+Table comment_mentions {
+  comment_id int [pk]
+  mentioned_user_id int [pk]
+  notified_at timestamp
+}
+
+// -----------------------------------------------------------------------------
+// Commerce setup, catalog, pricing, and inventory
+// -----------------------------------------------------------------------------
+
+Table currencies {
+  id int [pk, increment]
+  code char(3) [not null, unique]
+  name varchar(80) [not null]
+  symbol varchar(12)
+  minor_unit int [not null, default: 2]
+}
+
+Table countries {
+  id int [pk, increment]
+  iso_code char(2) [not null, unique]
+  name varchar(120) [not null]
+  default_currency_id int
+  phone_prefix varchar(12)
+}
+
+Table regions {
+  id int [pk, increment]
+  country_id int [not null]
+  code varchar(32) [not null]
+  name varchar(120) [not null]
+  tax_zone varchar(80)
+}
+
+Table tax_categories {
+  id int [pk, increment]
+  tenant_id int [not null]
+  name varchar(120) [not null]
+  code varchar(80) [not null]
+  is_default boolean [not null, default: false]
+}
+
+Table tax_rates {
+  id int [pk, increment]
+  tenant_id int [not null]
+  tax_category_id int [not null]
+  country_id int [not null]
+  region_id int
+  rate decimal(6,4) [not null]
+  starts_at timestamp [not null]
+}
+
+Table sales_channels [service_usage: 7, controller_usage: 6] {
+  id int [pk, increment]
+  tenant_id int [not null]
+  name varchar(120) [not null]
+  kind channel_kind [not null]
+  default_currency_id int
+  is_active boolean [not null, default: true]
+}
+
+Table stores [service_usage: 8, controller_usage: 7, color: '#1f883d'] {
+  id int [pk, increment]
+  tenant_id int [not null]
+  default_channel_id int
+  name varchar(140) [not null]
+  url varchar(255)
+  timezone varchar(80)
+  created_at timestamp [not null, default: `now()`]
+}
+
+Table store_staff {
+  store_id int [pk]
+  user_id int [pk]
+  role member_role [not null, default: 'contributor']
+  assigned_at timestamp [not null, default: `now()`]
+}
+
+Table brands {
+  id int [pk, increment]
+  tenant_id int [not null]
+  logo_file_id int
+  name varchar(140) [not null]
+  slug varchar(120) [not null]
+  description text
+}
+
+Table suppliers {
+  id int [pk, increment]
+  tenant_id int [not null]
+  default_currency_id int
+  name varchar(160) [not null]
+  tax_identifier varchar(80)
+  status varchar(40) [default: 'active']
+}
+
+Table supplier_contacts {
+  id int [pk, increment]
+  supplier_id int [not null]
+  name varchar(140) [not null]
+  email varchar(255)
+  phone varchar(40)
+  is_primary boolean [not null, default: false]
+}
+
+Table categories [service_usage: 5, controller_usage: 5] {
+  id int [pk, increment]
+  tenant_id int [not null]
+  parent_category_id int
+  name varchar(140) [not null]
+  slug varchar(140) [not null]
+  sort_order int [not null, default: 0]
+}
+
+Table product_types {
+  id int [pk, increment]
+  tenant_id int [not null]
+  name varchar(120) [not null]
+  handle varchar(100) [not null]
+  default_tax_category_id int
+}
+
+Table products [service_usage: 17, controller_usage: 12, color: '#bf8700'] {
+  id int [pk, increment]
+  tenant_id int [not null]
+  brand_id int
+  product_type_id int
+  default_category_id int
+  title varchar(255) [not null]
+  status product_status [not null, default: 'draft']
+  created_at timestamp [not null, default: `now()`]
+  Note: 'Catalog hub connected to variants, media, reviews, inventory, pricing, orders, and marketing.'
+}
+
+Table product_variants [service_usage: 12, controller_usage: 7] {
+  id int [pk, increment]
+  product_id int [not null]
+  sku varchar(120) [not null, unique]
+  barcode varchar(120)
+  title varchar(255) [not null]
+  weight_grams int
+  is_active boolean [not null, default: true]
+}
+
+Table product_media {
+  id int [pk, increment]
+  product_id int [not null]
+  variant_id int
+  file_id int [not null]
+  media_kind varchar(40) [not null]
+  sort_order int [not null, default: 0]
+}
+
+Table product_attributes {
+  id int [pk, increment]
+  tenant_id int [not null]
+  product_type_id int
+  name varchar(120) [not null]
+  code varchar(80) [not null]
+  value_type varchar(40) [not null]
+}
+
+Table product_attribute_values {
+  id int [pk, increment]
+  product_id int [not null]
+  attribute_id int [not null]
+  value_text text
+  value_number decimal(14,4)
+}
+
+Table product_variant_attribute_values {
+  variant_id int [pk]
+  attribute_id int [pk]
+  value_text text
+  value_number decimal(14,4)
+}
+
+Table price_lists {
+  id int [pk, increment]
+  tenant_id int [not null]
+  currency_id int [not null]
+  name varchar(140) [not null]
+  starts_at timestamp
+  ends_at timestamp
+}
+
+Table prices {
+  id int [pk, increment]
+  price_list_id int [not null]
+  variant_id int [not null]
+  currency_id int [not null]
+  amount_cents int [not null]
+  min_quantity int [default: 1]
+}
+
+Table inventory_locations [service_usage: 9, controller_usage: 5] {
+  id int [pk, increment]
+  tenant_id int [not null]
+  country_id int
+  name varchar(140) [not null]
+  location_type varchar(60) [not null]
+  is_active boolean [not null, default: true]
+}
+
+Table inventory_items [service_usage: 16, controller_usage: 8, color: '#0598bc'] {
+  id int [pk, increment]
+  tenant_id int [not null]
+  variant_id int [not null]
+  location_id int [not null]
+  on_hand int [not null, default: 0]
+  reserved int [not null, default: 0]
+  updated_at timestamp [not null, default: `now()`]
+}
+
+Table stock_movements {
+  id int [pk, increment]
+  inventory_item_id int [not null]
+  source_location_id int
+  target_location_id int
+  movement_type stock_movement_type [not null]
+  quantity int [not null]
+  created_by_user_id int
+  created_at timestamp [not null, default: `now()`]
+}
+
+Table stock_reservations {
+  id int [pk, increment]
+  inventory_item_id int [not null]
+  cart_item_id int
+  order_item_id int
+  quantity int [not null]
+  expires_at timestamp
+  released_at timestamp
+}
+
+// -----------------------------------------------------------------------------
+// Customers, CRM, loyalty, and promotions
+// -----------------------------------------------------------------------------
+
+Table customer_segments {
+  id int [pk, increment]
+  tenant_id int [not null]
+  name varchar(140) [not null]
+  rule_json jsonb
+  is_dynamic boolean [not null, default: true]
+  created_by_user_id int
+}
+
+Table customers [service_usage: 16, controller_usage: 11, color: '#cf222e'] {
+  id int [pk, increment]
+  tenant_id int [not null]
+  owner_user_id int
+  primary_email varchar(255) [not null]
+  status customer_status [not null, default: 'lead']
+  lifetime_value_cents int [not null, default: 0]
+  created_at timestamp [not null, default: `now()`]
+  Note: 'CRM hub for orders, subscriptions, support, loyalty, marketing, and analytics.'
+}
+
+Table customer_profiles {
+  id int [pk, increment]
+  customer_id int [not null, unique]
+  first_name varchar(100)
+  last_name varchar(100)
+  birthdate date
+  avatar_file_id int
+}
+
+Table customer_addresses {
+  id int [pk, increment]
+  customer_id int [not null]
+  country_id int
+  region_id int
+  address_type address_type [not null]
+  line1 varchar(255) [not null]
+  city varchar(120) [not null]
+  postal_code varchar(40)
+}
+
+Table customer_contacts {
+  id int [pk, increment]
+  customer_id int [not null]
+  channel varchar(40) [not null]
+  value varchar(255) [not null]
+  verified_at timestamp
+  is_primary boolean [not null, default: false]
+}
+
+Table customer_segment_members {
+  segment_id int [pk]
+  customer_id int [pk]
+  joined_at timestamp [not null, default: `now()`]
+  score decimal(8,4)
+}
+
+Table wishlists {
+  id int [pk, increment]
+  customer_id int [not null]
+  name varchar(140) [not null]
+  is_public boolean [not null, default: false]
+  created_at timestamp [not null, default: `now()`]
+}
+
+Table wishlist_items {
+  wishlist_id int [pk]
+  variant_id int [pk]
+  added_at timestamp [not null, default: `now()`]
+  note text
+}
+
+Table loyalty_programs {
+  id int [pk, increment]
+  tenant_id int [not null]
+  name varchar(140) [not null]
+  points_per_currency decimal(8,4) [not null]
+  is_active boolean [not null, default: true]
+}
+
+Table loyalty_accounts {
+  id int [pk, increment]
+  program_id int [not null]
+  customer_id int [not null]
+  points_balance int [not null, default: 0]
+  tier_name varchar(80)
+  enrolled_at timestamp [not null, default: `now()`]
+}
+
+Table loyalty_transactions {
+  id int [pk, increment]
+  loyalty_account_id int [not null]
+  order_id int
+  points_delta int [not null]
+  reason varchar(120) [not null]
+  created_at timestamp [not null, default: `now()`]
+}
+
+Table gift_cards {
+  id int [pk, increment]
+  tenant_id int [not null]
+  customer_id int
+  currency_id int [not null]
+  code_hash varchar(255) [not null, unique]
+  balance_cents int [not null]
+  expires_at timestamp
+}
+
+Table coupons {
+  id int [pk, increment]
+  tenant_id int [not null]
+  campaign_id int
+  code varchar(80) [not null]
+  discount_type varchar(40) [not null]
+  discount_value decimal(12,2) [not null]
+  max_redemptions int
+}
+
+Table coupon_redemptions {
+  id int [pk, increment]
+  coupon_id int [not null]
+  customer_id int [not null]
+  order_id int
+  redeemed_at timestamp [not null, default: `now()`]
+}
+
+Table customer_notes {
+  id int [pk, increment]
+  customer_id int [not null]
+  author_user_id int [not null]
+  body text [not null]
+  pinned boolean [not null, default: false]
+  created_at timestamp [not null, default: `now()`]
+}
+
+Table customer_consents {
+  id int [pk, increment]
+  customer_id int [not null]
+  channel varchar(40) [not null]
+  consented boolean [not null]
+  source varchar(120)
+  captured_at timestamp [not null, default: `now()`]
+}
+
+// -----------------------------------------------------------------------------
+// Checkout, orders, billing, payments, and subscriptions
+// -----------------------------------------------------------------------------
+
+Table carts {
+  id int [pk, increment]
+  tenant_id int [not null]
+  customer_id int
+  sales_channel_id int [not null]
+  status cart_status [not null, default: 'open']
+  currency_id int [not null]
+  created_at timestamp [not null, default: `now()`]
+}
+
+Table cart_items {
+  id int [pk, increment]
+  cart_id int [not null]
+  variant_id int [not null]
+  quantity int [not null, default: 1]
+  unit_price_cents int [not null]
+  added_at timestamp [not null, default: `now()`]
+}
+
+Table checkout_sessions {
+  id int [pk, increment]
+  cart_id int [not null, unique]
+  customer_id int
+  billing_address_id int
+  shipping_address_id int
+  expires_at timestamp [not null]
+  completed_at timestamp
+}
+
+Table orders [service_usage: 19, controller_usage: 13, color: '#d4641c'] {
+  id int [pk, increment]
+  tenant_id int [not null]
+  customer_id int [not null]
+  store_id int
+  sales_channel_id int [not null]
+  currency_id int [not null]
+  status order_status [not null, default: 'pending']
+  total_cents int [not null, default: 0]
+  created_at timestamp [not null, default: `now()`]
+  Note: 'Operational hub connecting checkout, fulfillment, invoicing, payments, loyalty, support, and analytics.'
+}
+
+Table order_items {
+  id int [pk, increment]
+  order_id int [not null]
+  variant_id int [not null]
+  product_id int [not null]
+  quantity int [not null]
+  unit_price_cents int [not null]
+  tax_rate_id int
+}
+
+Table order_adjustments {
+  id int [pk, increment]
+  order_id int [not null]
+  coupon_id int
+  description varchar(160) [not null]
+  amount_cents int [not null]
+  created_at timestamp [not null, default: `now()`]
+}
+
+Table order_events {
+  id int [pk, increment]
+  order_id int [not null]
+  actor_user_id int
+  old_status order_status
+  new_status order_status [not null]
+  message text
+  created_at timestamp [not null, default: `now()`]
+}
+
+Table invoices {
+  id int [pk, increment]
+  order_id int
+  subscription_id int
+  customer_id int [not null]
+  currency_id int [not null]
+  status invoice_status [not null, default: 'draft']
+  total_cents int [not null, default: 0]
+  due_at timestamp
+}
+
+Table invoice_lines {
+  id int [pk, increment]
+  invoice_id int [not null]
+  order_item_id int
+  subscription_item_id int
+  description varchar(255) [not null]
+  quantity decimal(12,4) [not null, default: 1]
+  amount_cents int [not null]
+}
+
+Table payment_methods {
+  id int [pk, increment]
+  tenant_id int [not null]
+  customer_id int [not null]
+  provider varchar(60) [not null]
+  brand varchar(60)
+  last4 char(4)
+  expires_at date
+}
+
+Table payment_intents {
+  id int [pk, increment]
+  tenant_id int [not null]
+  customer_id int [not null]
+  order_id int
+  invoice_id int
+  payment_method_id int
+  amount_cents int [not null]
+  status payment_status [not null, default: 'requires_action']
+}
+
+Table payments [service_usage: 12, controller_usage: 7] {
+  id int [pk, increment]
+  payment_intent_id int [not null]
+  order_id int
+  invoice_id int
+  provider_reference varchar(255)
+  amount_cents int [not null]
+  status payment_status [not null, default: 'captured']
+  captured_at timestamp
+}
+
+Table payment_refunds {
+  id int [pk, increment]
+  payment_id int [not null]
+  return_id int
+  amount_cents int [not null]
+  reason varchar(160)
+  status payment_status [not null, default: 'refunded']
+  created_at timestamp [not null, default: `now()`]
+}
+
+Table disputes {
+  id int [pk, increment]
+  payment_id int [not null]
+  customer_id int [not null]
+  amount_cents int [not null]
+  reason varchar(160)
+  opened_at timestamp [not null]
+  resolved_at timestamp
+}
+
+Table plans {
+  id int [pk, increment]
+  tenant_id int [not null]
+  product_id int
+  name varchar(140) [not null]
+  billing_interval varchar(40) [not null]
+  is_active boolean [not null, default: true]
+}
+
+Table plan_prices {
+  id int [pk, increment]
+  plan_id int [not null]
+  currency_id int [not null]
+  amount_cents int [not null]
+  starts_at timestamp
+  ends_at timestamp
+}
+
+Table subscriptions [service_usage: 14, controller_usage: 9, color: '#bf3989'] {
+  id int [pk, increment]
+  tenant_id int [not null]
+  customer_id int [not null]
+  plan_id int [not null]
+  payment_method_id int
+  status varchar(40) [not null, default: 'trialing']
+  current_period_end timestamp
+  created_at timestamp [not null, default: `now()`]
+}
+
+Table subscription_items {
+  id int [pk, increment]
+  subscription_id int [not null]
+  plan_price_id int [not null]
+  quantity int [not null, default: 1]
+  metered boolean [not null, default: false]
+}
+
+Table usage_records {
+  id int [pk, increment]
+  subscription_item_id int [not null]
+  customer_id int [not null]
+  quantity decimal(14,4) [not null]
+  measured_at timestamp [not null]
+  source_event_id int
+}
+
+Table credit_accounts {
+  id int [pk, increment]
+  tenant_id int [not null]
+  customer_id int [not null]
+  currency_id int [not null]
+  balance_cents int [not null, default: 0]
+  created_at timestamp [not null, default: `now()`]
+}
+
+Table credit_transactions {
+  id int [pk, increment]
+  credit_account_id int [not null]
+  invoice_id int
+  order_id int
+  amount_cents int [not null]
+  reason varchar(160) [not null]
+  created_at timestamp [not null, default: `now()`]
+}
+
+Table payouts {
+  id int [pk, increment]
+  tenant_id int [not null]
+  supplier_id int
+  currency_id int [not null]
+  amount_cents int [not null]
+  status varchar(40) [not null, default: 'pending']
+  paid_at timestamp
+}
+
+Table payout_items {
+  id int [pk, increment]
+  payout_id int [not null]
+  order_item_id int
+  payment_id int
+  amount_cents int [not null]
+  description varchar(180)
+}
+
+// -----------------------------------------------------------------------------
+// Fulfillment, logistics, procurement, returns, and warehouse operations
+// -----------------------------------------------------------------------------
+
+Table carriers {
+  id int [pk, increment]
+  tenant_id int [not null]
+  name varchar(140) [not null]
+  tracking_url_template varchar(500)
+  is_active boolean [not null, default: true]
+}
+
+Table shipping_methods {
+  id int [pk, increment]
+  tenant_id int [not null]
+  carrier_id int
+  name varchar(140) [not null]
+  service_level varchar(80)
+  base_price_cents int [not null, default: 0]
+}
+
+Table shipments [service_usage: 15, controller_usage: 10, color: '#57606a'] {
+  id int [pk, increment]
+  tenant_id int [not null]
+  order_id int [not null]
+  shipping_method_id int
+  origin_location_id int
+  destination_address_id int
+  status shipment_status [not null, default: 'pending']
+  shipped_at timestamp
+  delivered_at timestamp
+}
+
+Table shipment_items {
+  id int [pk, increment]
+  shipment_id int [not null]
+  order_item_id int [not null]
+  inventory_item_id int
+  quantity int [not null]
+}
+
+Table shipment_events {
+  id int [pk, increment]
+  shipment_id int [not null]
+  carrier_id int
+  status shipment_status [not null]
+  location_text varchar(180)
+  occurred_at timestamp [not null]
+}
+
+Table returns {
+  id int [pk, increment]
+  tenant_id int [not null]
+  order_id int [not null]
+  customer_id int [not null]
+  status return_status [not null, default: 'requested']
+  reason varchar(180)
+  requested_at timestamp [not null, default: `now()`]
+}
+
+Table return_items {
+  id int [pk, increment]
+  return_id int [not null]
+  order_item_id int [not null]
+  received_inventory_item_id int
+  quantity int [not null]
+  condition varchar(80)
+}
+
+Table purchase_orders {
+  id int [pk, increment]
+  tenant_id int [not null]
+  supplier_id int [not null]
+  created_by_user_id int
+  currency_id int [not null]
+  status varchar(40) [not null, default: 'draft']
+  expected_at timestamp
+}
+
+Table purchase_order_items {
+  id int [pk, increment]
+  purchase_order_id int [not null]
+  variant_id int [not null]
+  destination_location_id int [not null]
+  quantity int [not null]
+  unit_cost_cents int [not null]
+}
+
+Table supplier_invoices {
+  id int [pk, increment]
+  supplier_id int [not null]
+  purchase_order_id int
+  currency_id int [not null]
+  total_cents int [not null]
+  issued_at timestamp [not null]
+  due_at timestamp
+}
+
+Table receiving_batches {
+  id int [pk, increment]
+  purchase_order_id int [not null]
+  received_by_user_id int
+  location_id int [not null]
+  received_at timestamp [not null, default: `now()`]
+  notes text
+}
+
+Table receiving_items {
+  id int [pk, increment]
+  receiving_batch_id int [not null]
+  purchase_order_item_id int [not null]
+  inventory_item_id int [not null]
+  quantity_received int [not null]
+  quantity_damaged int [not null, default: 0]
+}
+
+Table inventory_transfers {
+  id int [pk, increment]
+  tenant_id int [not null]
+  source_location_id int [not null]
+  target_location_id int [not null]
+  created_by_user_id int
+  status varchar(40) [not null, default: 'draft']
+  shipped_at timestamp
+}
+
+Table inventory_transfer_items {
+  id int [pk, increment]
+  transfer_id int [not null]
+  variant_id int [not null]
+  source_inventory_item_id int
+  target_inventory_item_id int
+  quantity int [not null]
+}
+
+Table replenishment_rules {
+  id int [pk, increment]
+  tenant_id int [not null]
+  variant_id int [not null]
+  location_id int [not null]
+  supplier_id int
+  min_on_hand int [not null]
+  reorder_quantity int [not null]
+}
+
+Table demand_forecasts {
+  id int [pk, increment]
+  tenant_id int [not null]
+  variant_id int [not null]
+  location_id int
+  sales_channel_id int
+  forecast_date date [not null]
+  expected_units int [not null]
+}
+
+Table warehouse_tasks {
+  id int [pk, increment]
+  tenant_id int [not null]
+  assigned_user_id int
+  location_id int [not null]
+  task_type varchar(80) [not null]
+  status varchar(40) [not null, default: 'open']
+  due_at timestamp
+}
+
+Table warehouse_task_items {
+  id int [pk, increment]
+  warehouse_task_id int [not null]
+  inventory_item_id int
+  order_item_id int
+  quantity int [not null]
+  completed_at timestamp
+}
+
+// -----------------------------------------------------------------------------
+// Marketing, content, notifications, reviews, and support
+// -----------------------------------------------------------------------------
+
+Table campaigns [service_usage: 12, controller_usage: 10, color: '#3fb950'] {
+  id int [pk, increment]
+  tenant_id int [not null]
+  created_by_user_id int
+  name varchar(180) [not null]
+  status campaign_status [not null, default: 'draft']
+  starts_at timestamp
+  ends_at timestamp
+}
+
+Table campaign_audiences {
+  id int [pk, increment]
+  campaign_id int [not null]
+  segment_id int
+  channel_id int
+  name varchar(140) [not null]
+  estimated_size int
+}
+
+Table campaign_messages {
+  id int [pk, increment]
+  campaign_id int [not null]
+  audience_id int
+  email_template_id int
+  sms_template_id int
+  subject varchar(255)
+  scheduled_at timestamp
+}
+
+Table email_templates {
+  id int [pk, increment]
+  tenant_id int [not null]
+  created_by_user_id int
+  name varchar(140) [not null]
+  subject varchar(255) [not null]
+  body_html text [not null]
+}
+
+Table sms_templates {
+  id int [pk, increment]
+  tenant_id int [not null]
+  created_by_user_id int
+  name varchar(140) [not null]
+  body_text text [not null]
+}
+
+Table push_tokens {
+  id int [pk, increment]
+  customer_id int
+  user_id int
+  token varchar(500) [not null, unique]
+  platform varchar(40) [not null]
+  registered_at timestamp [not null, default: `now()`]
+}
+
+Table notifications {
+  id int [pk, increment]
+  tenant_id int [not null]
+  customer_id int
+  user_id int
+  campaign_message_id int
+  status notification_status [not null, default: 'queued']
+  sent_at timestamp
+}
+
+Table notification_preferences {
+  id int [pk, increment]
+  tenant_id int [not null]
+  customer_id int
+  user_id int
+  channel varchar(40) [not null]
+  enabled boolean [not null, default: true]
+}
+
+Table content_pages {
+  id int [pk, increment]
+  tenant_id int [not null]
+  author_user_id int
+  slug varchar(180) [not null]
+  title varchar(255) [not null]
+  published_at timestamp
+}
+
+Table page_revisions {
+  id int [pk, increment]
+  page_id int [not null]
+  editor_user_id int
+  body_markdown text [not null]
+  revision_no int [not null]
+  created_at timestamp [not null, default: `now()`]
+}
+
+Table blog_posts {
+  id int [pk, increment]
+  tenant_id int [not null]
+  author_user_id int
+  hero_file_id int
+  title varchar(255) [not null]
+  slug varchar(180) [not null]
+  published_at timestamp
+}
+
+Table blog_comments {
+  id int [pk, increment]
+  post_id int [not null]
+  customer_id int
+  author_user_id int
+  parent_comment_id int
+  body text [not null]
+  created_at timestamp [not null, default: `now()`]
+}
+
+Table reviews {
+  id int [pk, increment]
+  tenant_id int [not null]
+  product_id int [not null]
+  variant_id int
+  customer_id int [not null]
+  order_item_id int
+  rating int [not null, note: '1 to 5']
+  body text
+}
+
+Table review_votes {
+  review_id int [pk]
+  customer_id int [pk]
+  helpful boolean [not null]
+  voted_at timestamp [not null, default: `now()`]
+}
+
+Table support_tickets [service_usage: 13, controller_usage: 10, color: '#6e40c9'] {
+  id int [pk, increment]
+  tenant_id int [not null]
+  customer_id int
+  order_id int
+  assigned_team_id int
+  status ticket_status [not null, default: 'new']
+  priority varchar(40) [not null, default: 'normal']
+  created_at timestamp [not null, default: `now()`]
+}
+
+Table ticket_messages {
+  id int [pk, increment]
+  ticket_id int [not null]
+  author_user_id int
+  author_customer_id int
+  body text [not null]
+  created_at timestamp [not null, default: `now()`]
+}
+
+Table ticket_assignments {
+  id int [pk, increment]
+  ticket_id int [not null]
+  assigned_user_id int [not null]
+  assigned_by_user_id int
+  assigned_at timestamp [not null, default: `now()`]
+}
+
+Table ticket_sla_events {
+  id int [pk, increment]
+  ticket_id int [not null]
+  event_type varchar(80) [not null]
+  due_at timestamp
+  breached_at timestamp
+  resolved_at timestamp
+}
+
+Table knowledge_base_articles {
+  id int [pk, increment]
+  tenant_id int [not null]
+  author_user_id int
+  related_product_id int
+  title varchar(255) [not null]
+  slug varchar(180) [not null]
+  published_at timestamp
+}
+
+Table knowledge_base_votes {
+  article_id int [pk]
+  customer_id int [pk]
+  helpful boolean [not null]
+  voted_at timestamp [not null, default: `now()`]
+}
+
+// -----------------------------------------------------------------------------
+// Analytics, integrations, workflow automation, and AI operations
+// -----------------------------------------------------------------------------
+
+Table data_sources {
+  id int [pk, increment]
+  tenant_id int [not null]
+  created_by_user_id int
+  name varchar(140) [not null]
+  source_type varchar(80) [not null]
+  is_active boolean [not null, default: true]
+}
+
+Table data_sync_jobs {
+  id int [pk, increment]
+  data_source_id int [not null]
+  triggered_by_user_id int
+  status sync_status [not null, default: 'queued']
+  started_at timestamp
+  finished_at timestamp
+  rows_processed int [not null, default: 0]
+}
+
+Table data_sync_errors {
+  id int [pk, increment]
+  sync_job_id int [not null]
+  entity_kind entity_kind
+  entity_id int
+  message text [not null]
+  occurred_at timestamp [not null, default: `now()`]
+}
+
+Table event_streams {
+  id int [pk, increment]
+  tenant_id int [not null]
+  data_source_id int
+  name varchar(140) [not null]
+  retention_days int [not null, default: 90]
+  is_active boolean [not null, default: true]
+}
+
+Table events [service_usage: 15, controller_usage: 5, color: '#0a7ea4'] {
+  id int [pk, increment]
+  tenant_id int [not null]
+  stream_id int
+  actor_user_id int
+  customer_id int
+  entity_kind entity_kind [not null]
+  entity_id int [not null]
+  event_name varchar(160) [not null]
+  occurred_at timestamp [not null, default: `now()`]
+}
+
+Table event_properties {
+  id int [pk, increment]
+  event_id int [not null]
+  property_key varchar(120) [not null]
+  property_value text
+  value_number decimal(16,6)
+}
+
+Table saved_queries {
+  id int [pk, increment]
+  tenant_id int [not null]
+  created_by_user_id int
+  name varchar(140) [not null]
+  sql_text text [not null]
+  created_at timestamp [not null, default: `now()`]
+}
+
+Table reports {
+  id int [pk, increment]
+  tenant_id int [not null]
+  created_by_user_id int
+  saved_query_id int
+  name varchar(140) [not null]
+  schedule_cron varchar(80)
+}
+
+Table report_widgets {
+  id int [pk, increment]
+  report_id int [not null]
+  saved_query_id int
+  widget_type varchar(80) [not null]
+  title varchar(140)
+  sort_order int [not null, default: 0]
+}
+
+Table dashboards [service_usage: 8, controller_usage: 8] {
+  id int [pk, increment]
+  tenant_id int [not null]
+  owner_user_id int
+  name varchar(140) [not null]
+  is_shared boolean [not null, default: false]
+  created_at timestamp [not null, default: `now()`]
+}
+
+Table dashboard_widgets {
+  id int [pk, increment]
+  dashboard_id int [not null]
+  report_widget_id int
+  saved_query_id int
+  x int [not null, default: 0]
+  y int [not null, default: 0]
+}
+
+Table feature_flags {
+  id int [pk, increment]
+  tenant_id int [not null]
+  created_by_user_id int
+  key varchar(120) [not null]
+  enabled boolean [not null, default: false]
+  created_at timestamp [not null, default: `now()`]
+}
+
+Table feature_flag_rules {
+  id int [pk, increment]
+  feature_flag_id int [not null]
+  segment_id int
+  percentage int
+  rule_json jsonb
+  priority int [not null, default: 0]
+}
+
+Table experiments {
+  id int [pk, increment]
+  tenant_id int [not null]
+  created_by_user_id int
+  feature_flag_id int
+  name varchar(160) [not null]
+  starts_at timestamp
+  ends_at timestamp
+}
+
+Table experiment_variants {
+  id int [pk, increment]
+  experiment_id int [not null]
+  key varchar(80) [not null]
+  name varchar(140) [not null]
+  weight int [not null]
+}
+
+Table experiment_assignments {
+  id int [pk, increment]
+  experiment_id int [not null]
+  variant_id int [not null]
+  customer_id int
+  user_id int
+  assigned_at timestamp [not null, default: `now()`]
+}
+
+Table automations [service_usage: 13, controller_usage: 9, color: '#8250df'] {
+  id int [pk, increment]
+  tenant_id int [not null]
+  created_by_user_id int
+  name varchar(160) [not null]
+  trigger_event varchar(160) [not null]
+  status automation_status [not null, default: 'draft']
+  created_at timestamp [not null, default: `now()`]
+}
+
+Table automation_steps {
+  id int [pk, increment]
+  automation_id int [not null]
+  next_step_id int
+  step_type varchar(80) [not null]
+  config_json jsonb
+  sort_order int [not null, default: 0]
+}
+
+Table automation_runs {
+  id int [pk, increment]
+  automation_id int [not null]
+  trigger_event_id int
+  customer_id int
+  order_id int
+  status sync_status [not null, default: 'queued']
+  started_at timestamp
+  finished_at timestamp
+}
+
+Table automation_run_logs {
+  id int [pk, increment]
+  automation_run_id int [not null]
+  step_id int
+  level varchar(20) [not null]
+  message text [not null]
+  created_at timestamp [not null, default: `now()`]
+}
+
+Table integration_accounts {
+  id int [pk, increment]
+  tenant_id int [not null]
+  owner_user_id int
+  provider varchar(80) [not null]
+  external_account_id varchar(255) [not null]
+  connected_at timestamp [not null, default: `now()`]
+}
+
+Table integration_events {
+  id int [pk, increment]
+  integration_account_id int [not null]
+  event_id int
+  external_event_id varchar(255)
+  payload_hash varchar(128)
+  received_at timestamp [not null, default: `now()`]
+}
+
+Table ai_agents [service_usage: 9, controller_usage: 7] {
+  id int [pk, increment]
+  tenant_id int [not null]
+  created_by_user_id int
+  name varchar(140) [not null]
+  purpose varchar(255)
+  is_active boolean [not null, default: true]
+}
+
+Table ai_prompts {
+  id int [pk, increment]
+  agent_id int [not null]
+  author_user_id int
+  name varchar(140) [not null]
+  prompt_text text [not null]
+  version_no int [not null, default: 1]
+}
+
+Table ai_runs [service_usage: 11, controller_usage: 8, color: '#0969da'] {
+  id int [pk, increment]
+  tenant_id int [not null]
+  agent_id int [not null]
+  prompt_id int
+  requested_by_user_id int
+  source_event_id int
+  status ai_run_status [not null, default: 'queued']
+  started_at timestamp
+  finished_at timestamp
+}
+
+Table ai_run_artifacts {
+  id int [pk, increment]
+  ai_run_id int [not null]
+  file_id int
+  artifact_type varchar(80) [not null]
+  content_text text
+  created_at timestamp [not null, default: `now()`]
+}
+
+// -----------------------------------------------------------------------------
+// Relationships
+// -----------------------------------------------------------------------------
+
+Ref: tenant_domains.tenant_id > tenants.id [delete: cascade]
+Ref: tenant_settings.tenant_id > tenants.id [delete: cascade]
+Ref: tenant_feature_entitlements.tenant_id > tenants.id [delete: cascade]
+Ref: users.tenant_id > tenants.id [delete: cascade]
+Ref: user_profiles.user_id - users.id [delete: cascade]
+Ref: user_profiles.avatar_file_id > files.id
+Ref: user_identities.user_id > users.id [delete: cascade]
+Ref: user_sessions.user_id > users.id [delete: cascade]
+Ref: api_keys.tenant_id > tenants.id [delete: cascade]
+Ref: api_keys.owner_user_id > users.id
+Ref: roles.tenant_id > tenants.id [delete: cascade]
+Ref: role_permissions.role_id > roles.id [delete: cascade]
+Ref: role_permissions.permission_id > permissions.id [delete: cascade]
+Ref: role_permissions.granted_by_user_id > users.id
+Ref: user_roles.user_id > users.id [delete: cascade]
+Ref: user_roles.role_id > roles.id [delete: cascade]
+Ref: user_roles.assigned_by_user_id > users.id
+Ref: teams.tenant_id > tenants.id [delete: cascade]
+Ref: teams.parent_team_id > teams.id
+Ref: team_members.team_id > teams.id [delete: cascade]
+Ref: team_members.user_id > users.id [delete: cascade]
+Ref: invitations.tenant_id > tenants.id [delete: cascade]
+Ref: invitations.invited_by_user_id > users.id
+Ref: invitations.role_id > roles.id
+Ref: invitations.accepted_user_id > users.id
+Ref: audit_logs.tenant_id > tenants.id [delete: cascade]
+Ref: audit_logs.actor_user_id > users.id
+Ref: webhook_endpoints.tenant_id > tenants.id [delete: cascade]
+Ref: webhook_endpoints.created_by_user_id > users.id
+Ref: webhook_deliveries.endpoint_id > webhook_endpoints.id [delete: cascade]
+Ref: webhook_deliveries.event_id > events.id
+Ref: files.tenant_id > tenants.id [delete: cascade]
+Ref: files.uploaded_by_user_id > users.id
+Ref: file_versions.file_id > files.id [delete: cascade]
+Ref: tags.tenant_id > tenants.id [delete: cascade]
+Ref: tags.created_by_user_id > users.id
+Ref: entity_tags.tag_id > tags.id [delete: cascade]
+Ref: entity_tags.tagged_by_user_id > users.id
+Ref: comments.tenant_id > tenants.id [delete: cascade]
+Ref: comments.parent_comment_id > comments.id
+Ref: comments.author_user_id > users.id
+Ref: comment_mentions.comment_id > comments.id [delete: cascade]
+Ref: comment_mentions.mentioned_user_id > users.id
+
+Ref: countries.default_currency_id > currencies.id
+Ref: regions.country_id > countries.id [delete: cascade]
+Ref: tax_categories.tenant_id > tenants.id [delete: cascade]
+Ref: tax_rates.tenant_id > tenants.id [delete: cascade]
+Ref: tax_rates.tax_category_id > tax_categories.id
+Ref: tax_rates.country_id > countries.id
+Ref: tax_rates.region_id > regions.id
+Ref: sales_channels.tenant_id > tenants.id [delete: cascade]
+Ref: sales_channels.default_currency_id > currencies.id
+Ref: stores.tenant_id > tenants.id [delete: cascade]
+Ref: stores.default_channel_id > sales_channels.id
+Ref: store_staff.store_id > stores.id [delete: cascade]
+Ref: store_staff.user_id > users.id [delete: cascade]
+Ref: brands.tenant_id > tenants.id [delete: cascade]
+Ref: brands.logo_file_id > files.id
+Ref: suppliers.tenant_id > tenants.id [delete: cascade]
+Ref: suppliers.default_currency_id > currencies.id
+Ref: supplier_contacts.supplier_id > suppliers.id [delete: cascade]
+Ref: categories.tenant_id > tenants.id [delete: cascade]
+Ref: categories.parent_category_id > categories.id
+Ref: product_types.tenant_id > tenants.id [delete: cascade]
+Ref: product_types.default_tax_category_id > tax_categories.id
+Ref: products.tenant_id > tenants.id [delete: cascade]
+Ref: products.brand_id > brands.id
+Ref: products.product_type_id > product_types.id
+Ref: products.default_category_id > categories.id
+Ref: product_variants.product_id > products.id [delete: cascade]
+Ref: product_media.product_id > products.id [delete: cascade]
+Ref: product_media.variant_id > product_variants.id
+Ref: product_media.file_id > files.id
+Ref: product_attributes.tenant_id > tenants.id [delete: cascade]
+Ref: product_attributes.product_type_id > product_types.id
+Ref: product_attribute_values.product_id > products.id [delete: cascade]
+Ref: product_attribute_values.attribute_id > product_attributes.id
+Ref: product_variant_attribute_values.variant_id > product_variants.id [delete: cascade]
+Ref: product_variant_attribute_values.attribute_id > product_attributes.id [delete: cascade]
+Ref: price_lists.tenant_id > tenants.id [delete: cascade]
+Ref: price_lists.currency_id > currencies.id
+Ref: prices.price_list_id > price_lists.id [delete: cascade]
+Ref: prices.variant_id > product_variants.id
+Ref: prices.currency_id > currencies.id
+Ref: inventory_locations.tenant_id > tenants.id [delete: cascade]
+Ref: inventory_locations.country_id > countries.id
+Ref: inventory_items.tenant_id > tenants.id [delete: cascade]
+Ref: inventory_items.variant_id > product_variants.id
+Ref: inventory_items.location_id > inventory_locations.id
+Ref: stock_movements.inventory_item_id > inventory_items.id
+Ref: stock_movements.source_location_id > inventory_locations.id
+Ref: stock_movements.target_location_id > inventory_locations.id
+Ref: stock_movements.created_by_user_id > users.id
+Ref: stock_reservations.inventory_item_id > inventory_items.id
+Ref: stock_reservations.cart_item_id > cart_items.id
+Ref: stock_reservations.order_item_id > order_items.id
+
+Ref: customer_segments.tenant_id > tenants.id [delete: cascade]
+Ref: customer_segments.created_by_user_id > users.id
+Ref: customers.tenant_id > tenants.id [delete: cascade]
+Ref: customers.owner_user_id > users.id
+Ref: customer_profiles.customer_id - customers.id [delete: cascade]
+Ref: customer_profiles.avatar_file_id > files.id
+Ref: customer_addresses.customer_id > customers.id [delete: cascade]
+Ref: customer_addresses.country_id > countries.id
+Ref: customer_addresses.region_id > regions.id
+Ref: customer_contacts.customer_id > customers.id [delete: cascade]
+Ref: customer_segment_members.segment_id > customer_segments.id [delete: cascade]
+Ref: customer_segment_members.customer_id > customers.id [delete: cascade]
+Ref: wishlists.customer_id > customers.id [delete: cascade]
+Ref: wishlist_items.wishlist_id > wishlists.id [delete: cascade]
+Ref: wishlist_items.variant_id > product_variants.id
+Ref: loyalty_programs.tenant_id > tenants.id [delete: cascade]
+Ref: loyalty_accounts.program_id > loyalty_programs.id
+Ref: loyalty_accounts.customer_id > customers.id
+Ref: loyalty_transactions.loyalty_account_id > loyalty_accounts.id
+Ref: loyalty_transactions.order_id > orders.id
+Ref: gift_cards.tenant_id > tenants.id [delete: cascade]
+Ref: gift_cards.customer_id > customers.id
+Ref: gift_cards.currency_id > currencies.id
+Ref: coupons.tenant_id > tenants.id [delete: cascade]
+Ref: coupons.campaign_id > campaigns.id
+Ref: coupon_redemptions.coupon_id > coupons.id
+Ref: coupon_redemptions.customer_id > customers.id
+Ref: coupon_redemptions.order_id > orders.id
+Ref: customer_notes.customer_id > customers.id [delete: cascade]
+Ref: customer_notes.author_user_id > users.id
+Ref: customer_consents.customer_id > customers.id [delete: cascade]
+
+Ref: carts.tenant_id > tenants.id [delete: cascade]
+Ref: carts.customer_id > customers.id
+Ref: carts.sales_channel_id > sales_channels.id
+Ref: carts.currency_id > currencies.id
+Ref: cart_items.cart_id > carts.id [delete: cascade]
+Ref: cart_items.variant_id > product_variants.id
+Ref: checkout_sessions.cart_id - carts.id [delete: cascade]
+Ref: checkout_sessions.customer_id > customers.id
+Ref: checkout_sessions.billing_address_id > customer_addresses.id
+Ref: checkout_sessions.shipping_address_id > customer_addresses.id
+Ref: orders.tenant_id > tenants.id [delete: cascade]
+Ref: orders.customer_id > customers.id
+Ref: orders.store_id > stores.id
+Ref: orders.sales_channel_id > sales_channels.id
+Ref: orders.currency_id > currencies.id
+Ref: order_items.order_id > orders.id [delete: cascade]
+Ref: order_items.variant_id > product_variants.id
+Ref: order_items.product_id > products.id
+Ref: order_items.tax_rate_id > tax_rates.id
+Ref: order_adjustments.order_id > orders.id [delete: cascade]
+Ref: order_adjustments.coupon_id > coupons.id
+Ref: order_events.order_id > orders.id [delete: cascade]
+Ref: order_events.actor_user_id > users.id
+Ref: invoices.order_id > orders.id
+Ref: invoices.subscription_id > subscriptions.id
+Ref: invoices.customer_id > customers.id
+Ref: invoices.currency_id > currencies.id
+Ref: invoice_lines.invoice_id > invoices.id [delete: cascade]
+Ref: invoice_lines.order_item_id > order_items.id
+Ref: invoice_lines.subscription_item_id > subscription_items.id
+Ref: payment_methods.tenant_id > tenants.id [delete: cascade]
+Ref: payment_methods.customer_id > customers.id
+Ref: payment_intents.tenant_id > tenants.id [delete: cascade]
+Ref: payment_intents.customer_id > customers.id
+Ref: payment_intents.order_id > orders.id
+Ref: payment_intents.invoice_id > invoices.id
+Ref: payment_intents.payment_method_id > payment_methods.id
+Ref: payments.payment_intent_id > payment_intents.id
+Ref: payments.order_id > orders.id
+Ref: payments.invoice_id > invoices.id
+Ref: payment_refunds.payment_id > payments.id
+Ref: payment_refunds.return_id > returns.id
+Ref: disputes.payment_id > payments.id
+Ref: disputes.customer_id > customers.id
+Ref: plans.tenant_id > tenants.id [delete: cascade]
+Ref: plans.product_id > products.id
+Ref: plan_prices.plan_id > plans.id [delete: cascade]
+Ref: plan_prices.currency_id > currencies.id
+Ref: subscriptions.tenant_id > tenants.id [delete: cascade]
+Ref: subscriptions.customer_id > customers.id
+Ref: subscriptions.plan_id > plans.id
+Ref: subscriptions.payment_method_id > payment_methods.id
+Ref: subscription_items.subscription_id > subscriptions.id [delete: cascade]
+Ref: subscription_items.plan_price_id > plan_prices.id
+Ref: usage_records.subscription_item_id > subscription_items.id
+Ref: usage_records.customer_id > customers.id
+Ref: usage_records.source_event_id > events.id
+Ref: credit_accounts.tenant_id > tenants.id [delete: cascade]
+Ref: credit_accounts.customer_id > customers.id
+Ref: credit_accounts.currency_id > currencies.id
+Ref: credit_transactions.credit_account_id > credit_accounts.id
+Ref: credit_transactions.invoice_id > invoices.id
+Ref: credit_transactions.order_id > orders.id
+Ref: payouts.tenant_id > tenants.id [delete: cascade]
+Ref: payouts.supplier_id > suppliers.id
+Ref: payouts.currency_id > currencies.id
+Ref: payout_items.payout_id > payouts.id [delete: cascade]
+Ref: payout_items.order_item_id > order_items.id
+Ref: payout_items.payment_id > payments.id
+
+Ref: carriers.tenant_id > tenants.id [delete: cascade]
+Ref: shipping_methods.tenant_id > tenants.id [delete: cascade]
+Ref: shipping_methods.carrier_id > carriers.id
+Ref: shipments.tenant_id > tenants.id [delete: cascade]
+Ref: shipments.order_id > orders.id
+Ref: shipments.shipping_method_id > shipping_methods.id
+Ref: shipments.origin_location_id > inventory_locations.id
+Ref: shipments.destination_address_id > customer_addresses.id
+Ref: shipment_items.shipment_id > shipments.id [delete: cascade]
+Ref: shipment_items.order_item_id > order_items.id
+Ref: shipment_items.inventory_item_id > inventory_items.id
+Ref: shipment_events.shipment_id > shipments.id [delete: cascade]
+Ref: shipment_events.carrier_id > carriers.id
+Ref: returns.tenant_id > tenants.id [delete: cascade]
+Ref: returns.order_id > orders.id
+Ref: returns.customer_id > customers.id
+Ref: return_items.return_id > returns.id [delete: cascade]
+Ref: return_items.order_item_id > order_items.id
+Ref: return_items.received_inventory_item_id > inventory_items.id
+Ref: purchase_orders.tenant_id > tenants.id [delete: cascade]
+Ref: purchase_orders.supplier_id > suppliers.id
+Ref: purchase_orders.created_by_user_id > users.id
+Ref: purchase_orders.currency_id > currencies.id
+Ref: purchase_order_items.purchase_order_id > purchase_orders.id [delete: cascade]
+Ref: purchase_order_items.variant_id > product_variants.id
+Ref: purchase_order_items.destination_location_id > inventory_locations.id
+Ref: supplier_invoices.supplier_id > suppliers.id
+Ref: supplier_invoices.purchase_order_id > purchase_orders.id
+Ref: supplier_invoices.currency_id > currencies.id
+Ref: receiving_batches.purchase_order_id > purchase_orders.id
+Ref: receiving_batches.received_by_user_id > users.id
+Ref: receiving_batches.location_id > inventory_locations.id
+Ref: receiving_items.receiving_batch_id > receiving_batches.id [delete: cascade]
+Ref: receiving_items.purchase_order_item_id > purchase_order_items.id
+Ref: receiving_items.inventory_item_id > inventory_items.id
+Ref: inventory_transfers.tenant_id > tenants.id [delete: cascade]
+Ref: inventory_transfers.source_location_id > inventory_locations.id
+Ref: inventory_transfers.target_location_id > inventory_locations.id
+Ref: inventory_transfers.created_by_user_id > users.id
+Ref: inventory_transfer_items.transfer_id > inventory_transfers.id [delete: cascade]
+Ref: inventory_transfer_items.variant_id > product_variants.id
+Ref: inventory_transfer_items.source_inventory_item_id > inventory_items.id
+Ref: inventory_transfer_items.target_inventory_item_id > inventory_items.id
+Ref: replenishment_rules.tenant_id > tenants.id [delete: cascade]
+Ref: replenishment_rules.variant_id > product_variants.id
+Ref: replenishment_rules.location_id > inventory_locations.id
+Ref: replenishment_rules.supplier_id > suppliers.id
+Ref: demand_forecasts.tenant_id > tenants.id [delete: cascade]
+Ref: demand_forecasts.variant_id > product_variants.id
+Ref: demand_forecasts.location_id > inventory_locations.id
+Ref: demand_forecasts.sales_channel_id > sales_channels.id
+Ref: warehouse_tasks.tenant_id > tenants.id [delete: cascade]
+Ref: warehouse_tasks.assigned_user_id > users.id
+Ref: warehouse_tasks.location_id > inventory_locations.id
+Ref: warehouse_task_items.warehouse_task_id > warehouse_tasks.id [delete: cascade]
+Ref: warehouse_task_items.inventory_item_id > inventory_items.id
+Ref: warehouse_task_items.order_item_id > order_items.id
+
+Ref: campaigns.tenant_id > tenants.id [delete: cascade]
+Ref: campaigns.created_by_user_id > users.id
+Ref: campaign_audiences.campaign_id > campaigns.id [delete: cascade]
+Ref: campaign_audiences.segment_id > customer_segments.id
+Ref: campaign_audiences.channel_id > sales_channels.id
+Ref: campaign_messages.campaign_id > campaigns.id [delete: cascade]
+Ref: campaign_messages.audience_id > campaign_audiences.id
+Ref: campaign_messages.email_template_id > email_templates.id
+Ref: campaign_messages.sms_template_id > sms_templates.id
+Ref: email_templates.tenant_id > tenants.id [delete: cascade]
+Ref: email_templates.created_by_user_id > users.id
+Ref: sms_templates.tenant_id > tenants.id [delete: cascade]
+Ref: sms_templates.created_by_user_id > users.id
+Ref: push_tokens.customer_id > customers.id
+Ref: push_tokens.user_id > users.id
+Ref: notifications.tenant_id > tenants.id [delete: cascade]
+Ref: notifications.customer_id > customers.id
+Ref: notifications.user_id > users.id
+Ref: notifications.campaign_message_id > campaign_messages.id
+Ref: notification_preferences.tenant_id > tenants.id [delete: cascade]
+Ref: notification_preferences.customer_id > customers.id
+Ref: notification_preferences.user_id > users.id
+Ref: content_pages.tenant_id > tenants.id [delete: cascade]
+Ref: content_pages.author_user_id > users.id
+Ref: page_revisions.page_id > content_pages.id [delete: cascade]
+Ref: page_revisions.editor_user_id > users.id
+Ref: blog_posts.tenant_id > tenants.id [delete: cascade]
+Ref: blog_posts.author_user_id > users.id
+Ref: blog_posts.hero_file_id > files.id
+Ref: blog_comments.post_id > blog_posts.id [delete: cascade]
+Ref: blog_comments.customer_id > customers.id
+Ref: blog_comments.author_user_id > users.id
+Ref: blog_comments.parent_comment_id > blog_comments.id
+Ref: reviews.tenant_id > tenants.id [delete: cascade]
+Ref: reviews.product_id > products.id
+Ref: reviews.variant_id > product_variants.id
+Ref: reviews.customer_id > customers.id
+Ref: reviews.order_item_id > order_items.id
+Ref: review_votes.review_id > reviews.id [delete: cascade]
+Ref: review_votes.customer_id > customers.id [delete: cascade]
+Ref: support_tickets.tenant_id > tenants.id [delete: cascade]
+Ref: support_tickets.customer_id > customers.id
+Ref: support_tickets.order_id > orders.id
+Ref: support_tickets.assigned_team_id > teams.id
+Ref: ticket_messages.ticket_id > support_tickets.id [delete: cascade]
+Ref: ticket_messages.author_user_id > users.id
+Ref: ticket_messages.author_customer_id > customers.id
+Ref: ticket_assignments.ticket_id > support_tickets.id [delete: cascade]
+Ref: ticket_assignments.assigned_user_id > users.id
+Ref: ticket_assignments.assigned_by_user_id > users.id
+Ref: ticket_sla_events.ticket_id > support_tickets.id [delete: cascade]
+Ref: knowledge_base_articles.tenant_id > tenants.id [delete: cascade]
+Ref: knowledge_base_articles.author_user_id > users.id
+Ref: knowledge_base_articles.related_product_id > products.id
+Ref: knowledge_base_votes.article_id > knowledge_base_articles.id [delete: cascade]
+Ref: knowledge_base_votes.customer_id > customers.id [delete: cascade]
+
+Ref: data_sources.tenant_id > tenants.id [delete: cascade]
+Ref: data_sources.created_by_user_id > users.id
+Ref: data_sync_jobs.data_source_id > data_sources.id [delete: cascade]
+Ref: data_sync_jobs.triggered_by_user_id > users.id
+Ref: data_sync_errors.sync_job_id > data_sync_jobs.id [delete: cascade]
+Ref: event_streams.tenant_id > tenants.id [delete: cascade]
+Ref: event_streams.data_source_id > data_sources.id
+Ref: events.tenant_id > tenants.id [delete: cascade]
+Ref: events.stream_id > event_streams.id
+Ref: events.actor_user_id > users.id
+Ref: events.customer_id > customers.id
+Ref: event_properties.event_id > events.id [delete: cascade]
+Ref: saved_queries.tenant_id > tenants.id [delete: cascade]
+Ref: saved_queries.created_by_user_id > users.id
+Ref: reports.tenant_id > tenants.id [delete: cascade]
+Ref: reports.created_by_user_id > users.id
+Ref: reports.saved_query_id > saved_queries.id
+Ref: report_widgets.report_id > reports.id [delete: cascade]
+Ref: report_widgets.saved_query_id > saved_queries.id
+Ref: dashboards.tenant_id > tenants.id [delete: cascade]
+Ref: dashboards.owner_user_id > users.id
+Ref: dashboard_widgets.dashboard_id > dashboards.id [delete: cascade]
+Ref: dashboard_widgets.report_widget_id > report_widgets.id
+Ref: dashboard_widgets.saved_query_id > saved_queries.id
+Ref: feature_flags.tenant_id > tenants.id [delete: cascade]
+Ref: feature_flags.created_by_user_id > users.id
+Ref: feature_flag_rules.feature_flag_id > feature_flags.id [delete: cascade]
+Ref: feature_flag_rules.segment_id > customer_segments.id
+Ref: experiments.tenant_id > tenants.id [delete: cascade]
+Ref: experiments.created_by_user_id > users.id
+Ref: experiments.feature_flag_id > feature_flags.id
+Ref: experiment_variants.experiment_id > experiments.id [delete: cascade]
+Ref: experiment_assignments.experiment_id > experiments.id [delete: cascade]
+Ref: experiment_assignments.variant_id > experiment_variants.id
+Ref: experiment_assignments.customer_id > customers.id
+Ref: experiment_assignments.user_id > users.id
+Ref: automations.tenant_id > tenants.id [delete: cascade]
+Ref: automations.created_by_user_id > users.id
+Ref: automation_steps.automation_id > automations.id [delete: cascade]
+Ref: automation_steps.next_step_id > automation_steps.id
+Ref: automation_runs.automation_id > automations.id [delete: cascade]
+Ref: automation_runs.trigger_event_id > events.id
+Ref: automation_runs.customer_id > customers.id
+Ref: automation_runs.order_id > orders.id
+Ref: automation_run_logs.automation_run_id > automation_runs.id [delete: cascade]
+Ref: automation_run_logs.step_id > automation_steps.id
+Ref: integration_accounts.tenant_id > tenants.id [delete: cascade]
+Ref: integration_accounts.owner_user_id > users.id
+Ref: integration_events.integration_account_id > integration_accounts.id [delete: cascade]
+Ref: integration_events.event_id > events.id
+Ref: ai_agents.tenant_id > tenants.id [delete: cascade]
+Ref: ai_agents.created_by_user_id > users.id
+Ref: ai_prompts.agent_id > ai_agents.id [delete: cascade]
+Ref: ai_prompts.author_user_id > users.id
+Ref: ai_runs.tenant_id > tenants.id [delete: cascade]
+Ref: ai_runs.agent_id > ai_agents.id
+Ref: ai_runs.prompt_id > ai_prompts.id
+Ref: ai_runs.requested_by_user_id > users.id
+Ref: ai_runs.source_event_id > events.id
+Ref: ai_run_artifacts.ai_run_id > ai_runs.id [delete: cascade]
+Ref: ai_run_artifacts.file_id > files.id
+
+// -----------------------------------------------------------------------------
+// Visual grouping for parser support and schema navigation
+// -----------------------------------------------------------------------------
+
+TableGroup "Identity & Tenancy" {
+  tenants
+  tenant_domains
+  tenant_settings
+  tenant_feature_entitlements
+  users
+  user_profiles
+  user_identities
+  user_sessions
+  api_keys
+  roles
+  permissions
+  role_permissions
+  user_roles
+  teams
+  team_members
+  invitations
+  audit_logs
+  webhook_endpoints
+  webhook_deliveries
+  files
+  file_versions
+  tags
+  entity_tags
+  comments
+  comment_mentions
+}
+
+TableGroup "Catalog & Inventory" {
+  currencies
+  countries
+  regions
+  tax_categories
+  tax_rates
+  sales_channels
+  stores
+  store_staff
+  brands
+  suppliers
+  supplier_contacts
+  categories
+  product_types
+  products
+  product_variants
+  product_media
+  product_attributes
+  product_attribute_values
+  product_variant_attribute_values
+  price_lists
+  prices
+  inventory_locations
+  inventory_items
+  stock_movements
+  stock_reservations
+}
+
+TableGroup "Customer CRM" {
+  customer_segments
+  customers
+  customer_profiles
+  customer_addresses
+  customer_contacts
+  customer_segment_members
+  wishlists
+  wishlist_items
+  loyalty_programs
+  loyalty_accounts
+  loyalty_transactions
+  gift_cards
+  coupons
+  coupon_redemptions
+  customer_notes
+  customer_consents
+}
+
+TableGroup "Orders & Billing" {
+  carts
+  cart_items
+  checkout_sessions
+  orders
+  order_items
+  order_adjustments
+  order_events
+  invoices
+  invoice_lines
+  payment_methods
+  payment_intents
+  payments
+  payment_refunds
+  disputes
+  plans
+  plan_prices
+  subscriptions
+  subscription_items
+  usage_records
+  credit_accounts
+  credit_transactions
+  payouts
+  payout_items
+}
+
+TableGroup "Fulfillment & Procurement" {
+  carriers
+  shipping_methods
+  shipments
+  shipment_items
+  shipment_events
+  returns
+  return_items
+  purchase_orders
+  purchase_order_items
+  supplier_invoices
+  receiving_batches
+  receiving_items
+  inventory_transfers
+  inventory_transfer_items
+  replenishment_rules
+  demand_forecasts
+  warehouse_tasks
+  warehouse_task_items
+}
+
+TableGroup "Engagement & Support" {
+  campaigns
+  campaign_audiences
+  campaign_messages
+  email_templates
+  sms_templates
+  push_tokens
+  notifications
+  notification_preferences
+  content_pages
+  page_revisions
+  blog_posts
+  blog_comments
+  reviews
+  review_votes
+  support_tickets
+  ticket_messages
+  ticket_assignments
+  ticket_sla_events
+  knowledge_base_articles
+  knowledge_base_votes
+}
+
+TableGroup "Analytics, Automation & AI" {
+  data_sources
+  data_sync_jobs
+  data_sync_errors
+  event_streams
+  events
+  event_properties
+  saved_queries
+  reports
+  report_widgets
+  dashboards
+  dashboard_widgets
+  feature_flags
+  feature_flag_rules
+  experiments
+  experiment_variants
+  experiment_assignments
+  automations
+  automation_steps
+  automation_runs
+  automation_run_logs
+  integration_accounts
+  integration_events
+  ai_agents
+  ai_prompts
+  ai_runs
+  ai_run_artifacts
+}
