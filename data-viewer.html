@@ -8,54 +8,60 @@
 </head>
 <body>
   <header id="toolbar">
-    <div class="brand"><a href="index.html">DB<span>Visualizer</span></a></div>
+    <div class="brand">DB<span>Visualizer</span></div>
+
     <div class="toolbar-group">
-      <label id="import-label" for="file-input" title="Import .sql file">
-        Import SQL
-        <input id="file-input" type="file" accept=".sql" />
+      <label id="import-label" for="file-input" title="Import a .sql dump">
+        Import .sql
+        <input id="file-input" type="file" accept=".sql,.txt" multiple />
       </label>
+
+      <div id="file-picker" class="hidden">
+        <select id="file-select" title="Cached files"></select>
+        <button id="btn-remove-file" type="button" title="Remove this file from cache" aria-label="Remove file">×</button>
+      </div>
     </div>
-    <div class="toolbar-group search-group">
-      <input id="table-search" type="text" placeholder="Search table…" list="table-list" autocomplete="off" />
-      <datalist id="table-list"></datalist>
-    </div>
-    <div class="toolbar-group">
-      <button id="btn-export-csv" title="Export current table as CSV" disabled>Export CSV</button>
-    </div>
-    <div class="nav-link"><a href="index.html">← Schema Visualizer</a></div>
+
+    <div class="spacer"></div>
+
+    <a class="nav-link" href="index.html">← Schema Visualizer</a>
   </header>
 
   <main id="app">
-    <!-- Sidebar: table list -->
     <aside id="sidebar">
+      <div class="sidebar-search">
+        <input id="table-search" type="text" placeholder="Filter tables" autocomplete="off" />
+      </div>
       <div class="sidebar-title">Tables <span id="table-count">0</span></div>
       <ul id="table-nav"></ul>
     </aside>
 
-    <!-- Main content: data grid -->
     <section id="content">
       <div id="empty-state">
-        <div class="empty-icon">📂</div>
-        <p>Import a <strong>.sql</strong> file to view table data</p>
-        <p class="hint">Supports MySQL / MariaDB dump files with CREATE TABLE + INSERT statements</p>
+        <p class="empty-title">No file loaded</p>
+        <p class="empty-sub">Import a <strong>.sql</strong> dump to browse its tables and rows.</p>
+        <button id="empty-import" type="button">Import .sql</button>
       </div>
 
       <div id="table-view" class="hidden">
         <div id="table-header">
           <h2 id="table-name"></h2>
-          <div id="table-meta">
-            <span id="row-count"></span>
-            <span id="col-count"></span>
+          <div id="table-tools">
+            <div id="table-meta">
+              <span id="row-count"></span>
+              <span id="col-count"></span>
+            </div>
+            <button id="btn-export-csv" type="button" title="Export current table as CSV" disabled>Export CSV</button>
           </div>
         </div>
 
         <div id="table-filters">
-          <input id="data-search" type="text" placeholder="Filter rows… (searches all columns)" />
+          <input id="data-search" type="text" placeholder="Filter rows" />
           <div id="pagination">
-            <button id="btn-prev" disabled>‹ Prev</button>
+            <button id="btn-prev" type="button" title="Previous page" disabled>‹</button>
             <span id="page-info">Page 1 of 1</span>
-            <button id="btn-next" disabled>Next ›</button>
-            <select id="page-size">
+            <button id="btn-next" type="button" title="Next page" disabled>›</button>
+            <select id="page-size" title="Rows per page">
               <option value="25">25 rows</option>
               <option value="50" selected>50 rows</option>
               <option value="100">100 rows</option>

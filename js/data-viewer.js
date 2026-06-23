@@ -7,8 +7,11 @@
 
   // ---- DOM refs ----
   var fileInput     = document.getElementById('file-input');
+  var fileSelect    = document.getElementById('file-select');
+  var filePicker    = document.getElementById('file-picker');
+  var btnRemoveFile = document.getElementById('btn-remove-file');
+  var emptyImport   = document.getElementById('empty-import');
   var tableSearch   = document.getElementById('table-search');
-  var datalistEl    = document.getElementById('table-list');
   var sidebarNav    = document.getElementById('table-nav');
   var tableCountEl  = document.getElementById('table-count');
   var emptyState    = document.getElementById('empty-state');
@@ -38,34 +41,176 @@
     return parseInt(pageSizeEl.value, 10) || 50;
   }
 
+  // ---- Cached files (localStorage) ----
+  var LS_INDEX  = 'dbv.dv.index';    // [{ id, name, size, addedAt }]
+  var LS_ACTIVE = 'dbv.dv.active';   // active file id
+  var LS_FILE   = 'dbv.dv.file.';    // per-file SQL text, keyed by id
+
+  function readIndex() {
+    try { return JSON.parse(localStorage.getItem(LS_INDEX)) || []; }
+    catch (e) { return []; }
+  }
+  function writeIndex(idx) {
+    try { localStorage.setItem(LS_INDEX, JSON.stringify(idx)); } catch (e) { /* ignore */ }
+  }
+  function getActiveId() {
+    try { return localStorage.getItem(LS_ACTIVE); } catch (e) { return null; }
+  }
+  function setActiveId(id) {
+    try {
+      if (id == null) localStorage.removeItem(LS_ACTIVE);
+      else localStorage.setItem(LS_ACTIVE, id);
+    } catch (e) { /* ignore */ }
+  }
+  function readFileSQL(id) {
+    try { return localStorage.getItem(LS_FILE + id); } catch (e) { return null; }
+  }
+
+  // Save (or replace by name) a file in the cache. Returns its id, or null on failure.
+  function cacheFile(name, sql) {
+    var idx = readIndex();
+    var existing = null;
+    for (var i = 0; i < idx.length; i++) {
+      if (idx[i].name === name) { existing = idx[i]; break; }
+    }
+    var id = existing ? existing.id
+      : ('f' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36));
+    try {
+      localStorage.setItem(LS_FILE + id, sql);
+    } catch (e) {
+      return null; // quota exceeded
+    }
+    if (existing) {
+      existing.size = sql.length;
+      existing.addedAt = Date.now();
+    } else {
+      idx.push({ id: id, name: name, size: sql.length, addedAt: Date.now() });
+    }
+    writeIndex(idx);
+    return id;
+  }
+
+  function removeCachedFile(id) {
+    var idx = readIndex().filter(function (f) { return f.id !== id; });
+    writeIndex(idx);
+    try { localStorage.removeItem(LS_FILE + id); } catch (e) { /* ignore */ }
+    return idx;
+  }
+
+  function refreshFilePicker() {
+    var idx = readIndex();
+    fileSelect.innerHTML = '';
+    if (idx.length === 0) {
+      filePicker.classList.add('hidden');
+      return;
+    }
+    filePicker.classList.remove('hidden');
+    var active = getActiveId();
+    idx.forEach(function (f) {
+      var opt = document.createElement('option');
+      opt.value = f.id;
+      opt.textContent = f.name;
+      if (f.id === active) opt.selected = true;
+      fileSelect.appendChild(opt);
+    });
+  }
+
+  // ---- Load parsed SQL into the viewer ----
+  function loadSQL(sql) {
+    var result = window.DBV.parseSQLDump(sql);
+    allTables = result.tables;
+    buildFKMap();
+    buildSidebar();
+    if (allTables.length > 0) {
+      selectTable(allTables[0].name);
+    } else {
+      showEmpty();
+    }
+  }
+
   // ---- File import ----
   fileInput.addEventListener('change', function () {
-    var file = fileInput.files[0];
-    if (!file) return;
-    var reader = new FileReader();
-    reader.onload = function (e) {
-      var sql = e.target.result;
-      var result = window.DBV.parseSQLDump(sql);
-      allTables = result.tables;
-      buildFKMap();
-      buildSidebar();
-      if (allTables.length > 0) {
-        selectTable(allTables[0].name);
-      } else {
-        showEmpty();
-      }
-    };
-    reader.readAsText(file);
+    var files = Array.prototype.slice.call(fileInput.files || []);
+    if (!files.length) return;
+
+    var pending = files.length;
+    var lastCachedId = null;
+    var lastSQL = null;
+    var uncached = false;
+
+    files.forEach(function (file) {
+      var reader = new FileReader();
+      reader.onload = function (e) {
+        var sql = e.target.result;
+        lastSQL = sql;
+        var id = cacheFile(file.name, sql);
+        if (id) lastCachedId = id;
+        else uncached = true;
+
+        if (--pending === 0) {
+          refreshFilePicker();
+          if (lastCachedId) {
+            setActiveId(lastCachedId);
+            fileSelect.value = lastCachedId;
+            loadSQL(readFileSQL(lastCachedId));
+          } else {
+            loadSQL(lastSQL); // couldn't cache — load in memory only
+          }
+          if (uncached) {
+            alert('Some files were too large to cache and were loaded without saving.');
+          }
+        }
+      };
+      reader.readAsText(file);
+    });
+
+    fileInput.value = ''; // allow re-importing the same file name
   });
+
+  // ---- Switch between cached files ----
+  fileSelect.addEventListener('change', function () {
+    var id = fileSelect.value;
+    setActiveId(id);
+    var sql = readFileSQL(id);
+    if (sql != null) loadSQL(sql);
+  });
+
+  // ---- Remove the selected cached file ----
+  btnRemoveFile.addEventListener('click', function () {
+    var id = fileSelect.value;
+    if (!id) return;
+    var idx = readIndex();
+    var f = null;
+    for (var i = 0; i < idx.length; i++) { if (idx[i].id === id) { f = idx[i]; break; } }
+    if (f && !confirm('Remove "' + f.name + '" from cache?')) return;
+
+    var remaining = removeCachedFile(id);
+    if (remaining.length) {
+      var nextId = remaining[0].id;
+      setActiveId(nextId);
+      refreshFilePicker();
+      fileSelect.value = nextId;
+      loadSQL(readFileSQL(nextId));
+    } else {
+      setActiveId(null);
+      refreshFilePicker();
+      allTables = [];
+      buildSidebar();
+      showEmpty();
+    }
+  });
+
+  // ---- Import from the empty-state button ----
+  if (emptyImport) {
+    emptyImport.addEventListener('click', function () { fileInput.click(); });
+  }
 
   // ---- Sidebar ----
   function buildSidebar() {
     sidebarNav.innerHTML = '';
-    datalistEl.innerHTML = '';
     tableCountEl.textContent = allTables.length;
 
     allTables.forEach(function (tbl) {
-      // sidebar item
       var li = document.createElement('li');
       li.dataset.table = tbl.name;
 
@@ -75,47 +220,39 @@
 
       var badge = document.createElement('span');
       badge.className = 'row-badge';
-      badge.textContent = tbl.rows.length + ' rows';
+      badge.textContent = tbl.rows.length;
+      badge.title = tbl.rows.length + ' rows';
       li.appendChild(badge);
 
       li.addEventListener('click', function () { selectTable(tbl.name); });
       sidebarNav.appendChild(li);
-
-      // datalist option
-      var opt = document.createElement('option');
-      opt.value = tbl.name;
-      datalistEl.appendChild(opt);
     });
+
+    filterSidebar();
   }
 
-  // ---- Table search ----
-  tableSearch.addEventListener('input', function () {
+  // ---- Table filter (sidebar) ----
+  function filterSidebar() {
     var q = tableSearch.value.trim().toLowerCase();
     var items = sidebarNav.querySelectorAll('li');
-    items.forEach(function (li) {
-      li.style.display = li.dataset.table.toLowerCase().indexOf(q) >= 0 ? '' : 'none';
-    });
-  });
+    for (var i = 0; i < items.length; i++) {
+      items[i].style.display =
+        items[i].dataset.table.toLowerCase().indexOf(q) >= 0 ? '' : 'none';
+    }
+  }
+
+  tableSearch.addEventListener('input', filterSidebar);
 
   tableSearch.addEventListener('keydown', function (ev) {
-    if (ev.key === 'Enter') {
-      var q = tableSearch.value.trim().toLowerCase();
-      var match = allTables.find(function (t) {
-        return t.name.toLowerCase() === q;
-      });
-      if (match) {
-        selectTable(match.name);
+    if (ev.key !== 'Enter') return;
+    var items = sidebarNav.querySelectorAll('li');
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].style.display !== 'none') {
+        selectTable(items[i].dataset.table);
         tableSearch.blur();
+        return;
       }
     }
-  });
-
-  tableSearch.addEventListener('change', function () {
-    var q = tableSearch.value.trim().toLowerCase();
-    var match = allTables.find(function (t) {
-      return t.name.toLowerCase() === q;
-    });
-    if (match) selectTable(match.name);
   });
 
   // ---- Select table ----
@@ -162,32 +299,45 @@
     gridHead.innerHTML = '';
     var thIdx = document.createElement('th');
     thIdx.textContent = '#';
-    thIdx.style.width = '50px';
     gridHead.appendChild(thIdx);
 
     activeTable.columns.forEach(function (col, idx) {
       var th = document.createElement('th');
       var fk = getFKInfo(activeTable.name, col.name);
-      th.textContent = col.name;
-      th.title = col.type + (fk ? '  ·  FK → ' + fk.refTable + '.' + fk.refColumn : '');
+
+      var main = document.createElement('div');
+      main.className = 'th-main';
+
+      var nameEl = document.createElement('span');
+      nameEl.className = 'col-name';
+      nameEl.textContent = col.name;
+      main.appendChild(nameEl);
+
       if (fk) {
-        var fkBtn = document.createElement('button');
-        fkBtn.className = 'fk-header-btn';
-        fkBtn.textContent = '→ ' + fk.refTable;
-        fkBtn.title = 'Go to ' + fk.refTable;
-        fkBtn.dataset.refTable = fk.refTable;
-        fkBtn.addEventListener('click', function (e) {
+        var fkEl = document.createElement('span');
+        fkEl.className = 'fk-ref';
+        fkEl.textContent = '→ ' + fk.refTable;
+        fkEl.title = 'Go to ' + fk.refTable;
+        fkEl.dataset.refTable = fk.refTable;
+        fkEl.addEventListener('click', function (e) {
           e.stopPropagation(); // don't trigger sort
           selectTable(this.dataset.refTable);
         });
-        th.appendChild(fkBtn);
+        main.appendChild(fkEl);
       }
-      if (idx === sortCol) {
-        var arrow = document.createElement('span');
-        arrow.className = 'sort-arrow';
-        arrow.textContent = sortAsc ? '▲' : '▼';
-        th.appendChild(arrow);
+
+      th.appendChild(main);
+
+      if (col.type) {
+        var typeEl = document.createElement('span');
+        typeEl.className = 'col-type';
+        typeEl.textContent = col.type;
+        th.appendChild(typeEl);
       }
+
+      th.title = col.name + (col.type ? ' · ' + col.type : '') +
+        (fk ? '  ·  FK → ' + fk.refTable + '.' + fk.refColumn : '');
+
       th.addEventListener('click', function () {
         if (sortCol === idx) {
           sortAsc = !sortAsc;
@@ -275,8 +425,7 @@
       // Row index
       var tdIdx = document.createElement('td');
       tdIdx.textContent = start + ri + 1;
-      tdIdx.style.color = 'var(--text-dim)';
-      tdIdx.style.fontWeight = '600';
+      tdIdx.className = 'row-idx';
       tr.appendChild(tdIdx);
 
       for (var ci = 0; ci < activeTable.columns.length; ci++) {
@@ -338,11 +487,11 @@
     ths.forEach(function (th, idx) {
       var existing = th.querySelector('.sort-arrow');
       if (existing) existing.remove();
-      if (idx - 1 === sortCol) { // idx-1 because first th is #
+      if (sortCol >= 0 && idx - 1 === sortCol) { // idx-1 because first th is #
         var arrow = document.createElement('span');
         arrow.className = 'sort-arrow';
         arrow.textContent = sortAsc ? '▲' : '▼';
-        th.appendChild(arrow);
+        (th.querySelector('.th-main') || th).appendChild(arrow);
       }
     });
   }
@@ -449,4 +598,26 @@
     }
     return s;
   }
+
+  // ---- Boot: restore cached files ----
+  (function boot() {
+    refreshFilePicker();
+    var idx = readIndex();
+    if (!idx.length) { showEmpty(); return; }
+
+    var active = getActiveId();
+    var found = false;
+    for (var i = 0; i < idx.length; i++) {
+      if (idx[i].id === active) { found = true; break; }
+    }
+    if (!found) { active = idx[0].id; setActiveId(active); }
+
+    var sql = readFileSQL(active);
+    if (sql != null) {
+      fileSelect.value = active;
+      loadSQL(sql);
+    } else {
+      showEmpty();
+    }
+  })();
 })();
