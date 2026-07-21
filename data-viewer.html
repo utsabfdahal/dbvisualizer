@@ -44,6 +44,20 @@
       </div>
 
       <div id="table-view" class="hidden">
+        <section id="query-console" aria-label="SQL query console">
+          <div class="query-editor-row">
+            <textarea id="sql-query" rows="3" spellcheck="false" aria-label="SQL query" placeholder="SELECT * FROM [modules] WHERE [id] = 20;"></textarea>
+            <div class="query-actions">
+              <button id="btn-run-query" type="button" disabled>Run SQL</button>
+              <button id="btn-clear-query" type="button">Clear</button>
+            </div>
+          </div>
+          <div class="query-console-footer">
+            <span class="query-hint">Query any imported table · ⌘/Ctrl + Enter</span>
+            <span id="query-status" role="status" aria-live="polite"></span>
+          </div>
+        </section>
+
         <div id="table-header">
           <h2 id="table-name"></h2>
           <div id="table-tools">
@@ -84,6 +98,7 @@
     </section>
   </main>
 
+  <script src="https://cdn.jsdelivr.net/npm/alasql@4.17.3/dist/alasql.min.js"></script>
   <script src="js/sql-data-parser.js"></script>
   <script src="js/data-viewer.js"></script>
 </body>

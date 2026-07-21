@@ -28,6 +28,10 @@
   var pageSizeEl    = document.getElementById('page-size');
   var showingInfo   = document.getElementById('showing-info');
   var btnExportCSV  = document.getElementById('btn-export-csv');
+  var sqlQuery      = document.getElementById('sql-query');
+  var btnRunQuery   = document.getElementById('btn-run-query');
+  var btnClearQuery = document.getElementById('btn-clear-query');
+  var queryStatus   = document.getElementById('query-status');
 
   // ---- State ----
   var allTables     = [];   // parsed table objects
@@ -36,9 +40,16 @@
   var sortCol       = -1;
   var sortAsc       = true;
   var currentPage   = 0;
+  var queryDatabase = null; // AlaSQL database populated from the current dump
+  var lastTableName = null; // last real table selected before showing query results
+  var queryResultActive = false;
 
   function getPageSize() {
     return parseInt(pageSizeEl.value, 10) || 50;
+  }
+
+  function formatCount(count, singular) {
+    return count + ' ' + singular + (count === 1 ? '' : 's');
   }
 
   // ---- Cached files: metadata in localStorage, contents in IndexedDB ----
@@ -205,6 +216,7 @@
     allTables = result.tables;
     buildFKMap();
     buildSidebar();
+    buildQueryDatabase();
     if (allTables.length > 0) {
       selectTable(allTables[0].name);
     } else {
@@ -346,6 +358,8 @@
   function selectTable(name) {
     activeTable = allTables.find(function (t) { return t.name === name; });
     if (!activeTable) return;
+    lastTableName = name;
+    queryResultActive = false;
 
     // Update sidebar active state
     var items = sidebarNav.querySelectorAll('li');
@@ -366,17 +380,339 @@
 
     // Header info
     tableNameEl.textContent = activeTable.name;
-    rowCountEl.textContent = activeTable.rows.length + ' rows';
-    colCountEl.textContent = activeTable.columns.length + ' columns';
+    rowCountEl.textContent = formatCount(activeTable.rows.length, 'row');
+    colCountEl.textContent = formatCount(activeTable.columns.length, 'column');
+    updateQueryPlaceholder(activeTable);
 
     buildGrid();
   }
 
   function showEmpty() {
+    activeTable = null;
+    lastTableName = null;
+    queryResultActive = false;
+    queryDatabase = null;
     emptyState.classList.remove('hidden');
     tableView.classList.add('hidden');
     btnExportCSV.disabled = true;
+    btnRunQuery.disabled = true;
+    setQueryStatus('', '');
   }
+
+  // ---- SQL query console ----
+  function quoteSQLIdentifier(name) {
+    return '[' + String(name).replace(/]/g, ']]') + ']';
+  }
+
+  function updateQueryPlaceholder(table) {
+    if (!table) return;
+    var idColumn = null;
+    for (var i = 0; i < table.columns.length; i++) {
+      if (table.columns[i].name.toLowerCase() === 'id') {
+        idColumn = table.columns[i].name;
+        break;
+      }
+    }
+    sqlQuery.placeholder = idColumn
+      ? 'SELECT * FROM ' + quoteSQLIdentifier(table.name) + ' WHERE ' + quoteSQLIdentifier(idColumn) + ' = 20;'
+      : 'SELECT * FROM ' + quoteSQLIdentifier(table.name) + ' LIMIT 100;';
+  }
+
+  function setQueryStatus(message, state) {
+    queryStatus.textContent = message || '';
+    queryStatus.className = state || '';
+    queryStatus.title = message || '';
+  }
+
+  function coerceQueryValue(value, columnType) {
+    if (value === null || value === undefined) return null;
+    var type = String(columnType || '').toLowerCase();
+    var numberValue;
+
+    if (/^(tinyint|smallint|mediumint|int|integer|bigint|year)\b/.test(type)) {
+      numberValue = Number(value);
+      if (!isFinite(numberValue)) return value;
+      if (/^bigint\b/.test(type) && !Number.isSafeInteger(numberValue)) return value;
+      return numberValue;
+    }
+
+    if (/^(decimal|numeric|float|double|real)\b/.test(type)) {
+      numberValue = Number(value);
+      return isFinite(numberValue) ? numberValue : value;
+    }
+
+    if (/^(bool|boolean)\b/.test(type)) {
+      if (value === true || value === false) return value;
+      if (String(value) === '1' || String(value).toLowerCase() === 'true') return true;
+      if (String(value) === '0' || String(value).toLowerCase() === 'false') return false;
+    }
+
+    return value;
+  }
+
+  function buildQueryDatabase() {
+    queryDatabase = null;
+    btnRunQuery.disabled = true;
+
+    if (typeof window.alasql !== 'function' || !window.alasql.Database) {
+      setQueryStatus('SQL engine could not be loaded. Check your internet connection.', 'error');
+      return;
+    }
+
+    try {
+      var db = new window.alasql.Database();
+      allTables.forEach(function (table) {
+        db.exec('CREATE TABLE ' + quoteSQLIdentifier(table.name));
+
+        var records = table.rows.map(function (row) {
+          var record = {};
+          table.columns.forEach(function (column, columnIndex) {
+            var value = columnIndex < row.length ? row[columnIndex] : null;
+            record[column.name] = coerceQueryValue(value, column.type);
+          });
+          return record;
+        });
+
+        db.tables[table.name].data = records;
+      });
+
+      queryDatabase = db;
+      btnRunQuery.disabled = allTables.length === 0;
+      setQueryStatus(formatCount(allTables.length, 'table') + ' ready', '');
+    } catch (err) {
+      console.error('Could not build query database', err);
+      setQueryStatus('Could not prepare SQL tables: ' + getErrorMessage(err), 'error');
+    }
+  }
+
+  // Replace comments, string literals, and quoted identifiers with spaces so
+  // statement separators and mutating SQL keywords can be checked safely.
+  function maskSQLQuotedContent(sql) {
+    var output = '';
+    var i = 0;
+
+    while (i < sql.length) {
+      var char = sql[i];
+      var next = sql[i + 1];
+
+      if ((char === '-' && next === '-') || char === '#') {
+        while (i < sql.length && sql[i] !== '\n') {
+          output += ' ';
+          i++;
+        }
+        continue;
+      }
+
+      if (char === '/' && next === '*') {
+        output += '  ';
+        i += 2;
+        while (i < sql.length && !(sql[i] === '*' && sql[i + 1] === '/')) {
+          output += sql[i] === '\n' ? '\n' : ' ';
+          i++;
+        }
+        if (i < sql.length) {
+          output += '  ';
+          i += 2;
+        }
+        continue;
+      }
+
+      if (char === "'" || char === '"' || char === '`' || char === '[') {
+        var closing = char === '[' ? ']' : char;
+        output += ' ';
+        i++;
+        while (i < sql.length) {
+          if (sql[i] === '\\' && char !== '[') {
+            output += ' ';
+            i++;
+            if (i < sql.length) { output += ' '; i++; }
+            continue;
+          }
+          if (sql[i] === closing) {
+            output += ' ';
+            if (sql[i + 1] === closing) {
+              output += ' ';
+              i += 2;
+              continue;
+            }
+            i++;
+            break;
+          }
+          output += sql[i] === '\n' ? '\n' : ' ';
+          i++;
+        }
+        continue;
+      }
+
+      output += char;
+      i++;
+    }
+
+    return output;
+  }
+
+  function validateReadOnlyQuery(sql) {
+    var masked = maskSQLQuotedContent(sql).trim();
+    if (!masked) throw new Error('Enter a SQL query first.');
+
+    // A trailing semicolon is fine; multiple statements are not.
+    var withoutTrailingSemicolons = masked.replace(/;+\s*$/, '');
+    if (withoutTrailingSemicolons.indexOf(';') >= 0) {
+      throw new Error('Run one SELECT statement at a time.');
+    }
+
+    if (!/^(SELECT|WITH)\b/i.test(withoutTrailingSemicolons)) {
+      throw new Error('The data viewer accepts read-only SELECT queries.');
+    }
+
+    if (/\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|REPLACE|MERGE|INTO|ATTACH|DETACH)\b/i.test(withoutTrailingSemicolons)) {
+      throw new Error('Only read-only SELECT queries are allowed.');
+    }
+  }
+
+  function normalizeQueryResult(result) {
+    var columnNames = [];
+    var rows = [];
+
+    if (!Array.isArray(result)) result = [result];
+    if (result.length === 0) return { columns: [], rows: [] };
+
+    var hasObjects = result.some(function (item) {
+      return item !== null && typeof item === 'object' && !Array.isArray(item) && !(item instanceof Date);
+    });
+
+    if (hasObjects) {
+      result.forEach(function (item) {
+        if (item === null || typeof item !== 'object' || Array.isArray(item)) return;
+        Object.keys(item).forEach(function (key) {
+          if (columnNames.indexOf(key) < 0) columnNames.push(key);
+        });
+      });
+      rows = result.map(function (item) {
+        return columnNames.map(function (name) {
+          return item && Object.prototype.hasOwnProperty.call(item, name) ? item[name] : null;
+        });
+      });
+    } else if (result.some(Array.isArray)) {
+      var widestRow = 0;
+      result.forEach(function (item) {
+        if (Array.isArray(item)) widestRow = Math.max(widestRow, item.length);
+      });
+      for (var i = 0; i < widestRow; i++) columnNames.push('column_' + (i + 1));
+      rows = result.map(function (item) {
+        return Array.isArray(item) ? item : [item];
+      });
+    } else {
+      columnNames = ['value'];
+      rows = result.map(function (item) { return [item]; });
+    }
+
+    var columns = columnNames.map(function (name, columnIndex) {
+      var type = '';
+      for (var rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+        var value = rows[rowIndex][columnIndex];
+        if (value === null || value === undefined) continue;
+        if (value instanceof Date) type = 'datetime';
+        else if (Array.isArray(value)) type = 'array';
+        else type = typeof value;
+        break;
+      }
+      return { name: name, type: type };
+    });
+
+    return { columns: columns, rows: rows };
+  }
+
+  function showQueryResult(result, elapsedMs) {
+    var normalized = normalizeQueryResult(result);
+    activeTable = {
+      name: 'Query result',
+      exportName: 'query-result',
+      columns: normalized.columns,
+      foreignKeys: [],
+      rows: normalized.rows
+    };
+    queryResultActive = true;
+
+    var items = sidebarNav.querySelectorAll('li');
+    items.forEach(function (li) { li.classList.remove('active'); });
+
+    sortCol = -1;
+    sortAsc = true;
+    currentPage = 0;
+    dataSearch.value = '';
+    tableNameEl.textContent = activeTable.name;
+    rowCountEl.textContent = formatCount(activeTable.rows.length, 'row');
+    colCountEl.textContent = formatCount(activeTable.columns.length, 'column');
+    btnExportCSV.disabled = false;
+
+    buildGrid();
+    setQueryStatus(
+      formatCount(activeTable.rows.length, 'row') + ' · ' + formatDuration(elapsedMs),
+      'success'
+    );
+  }
+
+  function formatDuration(milliseconds) {
+    return (milliseconds < 1 ? milliseconds.toFixed(2) : milliseconds.toFixed(1)) + ' ms';
+  }
+
+  function getErrorMessage(err) {
+    if (!err) return 'Unknown error';
+    return err.message || String(err);
+  }
+
+  function runSQLQuery() {
+    var query = sqlQuery.value.trim();
+
+    try {
+      validateReadOnlyQuery(query);
+    } catch (err) {
+      setQueryStatus(getErrorMessage(err), 'error');
+      return;
+    }
+
+    if (!queryDatabase) {
+      setQueryStatus('SQL engine is not ready.', 'error');
+      return;
+    }
+
+    var databaseAtStart = queryDatabase;
+    btnRunQuery.disabled = true;
+    setQueryStatus('Running…', '');
+
+    // Let the browser paint the running state before AlaSQL executes synchronously.
+    setTimeout(function () {
+      if (databaseAtStart !== queryDatabase) return;
+      var startedAt = window.performance && performance.now ? performance.now() : Date.now();
+      try {
+        var result = databaseAtStart.exec(query);
+        var finishedAt = window.performance && performance.now ? performance.now() : Date.now();
+        showQueryResult(result, finishedAt - startedAt);
+      } catch (err) {
+        console.error('SQL query failed', err);
+        setQueryStatus(getErrorMessage(err), 'error');
+      } finally {
+        btnRunQuery.disabled = !queryDatabase;
+      }
+    }, 0);
+  }
+
+  btnRunQuery.addEventListener('click', runSQLQuery);
+  sqlQuery.addEventListener('keydown', function (event) {
+    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      runSQLQuery();
+    }
+  });
+  btnClearQuery.addEventListener('click', function () {
+    sqlQuery.value = '';
+    if (queryResultActive && lastTableName) {
+      selectTable(lastTableName);
+    }
+    setQueryStatus(allTables.length ? formatCount(allTables.length, 'table') + ' ready' : '', '');
+    sqlQuery.focus();
+  });
 
   // ---- Build grid ----
   function buildGrid() {
@@ -557,13 +893,25 @@
       gridBody.appendChild(tr);
     });
 
+    if (pageRows.length === 0) {
+      var emptyRow = document.createElement('tr');
+      var emptyCell = document.createElement('td');
+      emptyCell.colSpan = activeTable.columns.length + 1;
+      emptyCell.className = 'empty-grid';
+      emptyCell.textContent = queryResultActive ? 'The query returned no rows.' : 'No rows to display.';
+      emptyRow.appendChild(emptyCell);
+      gridBody.appendChild(emptyRow);
+    }
+
     // Pagination controls
     btnPrev.disabled = currentPage <= 0;
     btnNext.disabled = currentPage >= totalPages - 1;
     pageInfo.textContent = 'Page ' + (currentPage + 1) + ' of ' + totalPages;
 
     // Footer
-    if (filteredRows.length === activeTable.rows.length) {
+    if (filteredRows.length === 0) {
+      showingInfo.textContent = 'Showing 0 rows';
+    } else if (filteredRows.length === activeTable.rows.length) {
       showingInfo.textContent = 'Showing ' + (start + 1) + '–' + end + ' of ' + filteredRows.length + ' rows';
     } else {
       showingInfo.textContent = 'Showing ' + (start + 1) + '–' + end + ' of ' + filteredRows.length + ' filtered rows (' + activeTable.rows.length + ' total)';
@@ -629,7 +977,7 @@
     var blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = activeTable.name + '.csv';
+    a.download = (activeTable.exportName || activeTable.name) + '.csv';
     a.click();
     setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
   });
