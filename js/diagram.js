@@ -69,6 +69,7 @@
     this.savedPositions = null; // backup while focused
     this.geom = {};            // key -> {x,y,w,h,rowY:{col:y}}
     this.focused = null;
+    this.subset = null;        // array of keys when viewing a specific set of tables
     this.selected = null;
     this.scale = 1;
     this.tx = 0;
@@ -125,6 +126,10 @@
       });
     }
     if (this.focused && !valid[this.focused]) this.clearFocus(true);
+    if (this.subset) {
+      this.subset = this.subset.filter(function (k) { return valid[k]; });
+      if (!this.subset.length) this.clearFocus(true);
+    }
     if (this.selected && !valid[this.selected]) this.selected = null;
 
     // give new tables a position
@@ -217,6 +222,9 @@
   // table keys visible under current focus
   Diagram.prototype.visibleKeys = function () {
     var self = this;
+    if (this.subset) {
+      return this.subset.filter(function (k) { return !!self._findTable(k); });
+    }
     if (!this.focused) {
       return this.model.tables.map(function (t) { return t.key; });
     }
@@ -720,9 +728,61 @@
     if (rb) label('\u201C' + meta.key + '\u201D references ' + meta.right.length + ' \u2192', rb);
   };
 
+  // Show only the given set of tables (by exact key) plus any relationships
+  // that exist between them. Positions are kept from the overview layout.
+  Diagram.prototype.showSubset = function (keys, missing) {
+    var self = this;
+    var seen = {};
+    var valid = [];
+    (keys || []).forEach(function (k) {
+      var t = self._findTable(k);
+      if (t && !seen[t.key]) { seen[t.key] = true; valid.push(t.key); }
+    });
+    if (!valid.length) return { matched: [], missing: missing || keys || [] };
+
+    // entering a view mode from the overview: back up the current view
+    if (!this.focused && !this.subset) {
+      this.savedView = { scale: this.scale, tx: this.tx, ty: this.ty };
+    }
+    // leaving focus mode (which relocates tables): restore the real layout first
+    if (this.focused) {
+      this.focused = null;
+      this._focusMeta = null;
+      if (this.savedPositions) {
+        this.positions = this.savedPositions;
+        this.savedPositions = null;
+      }
+    }
+
+    this.subset = valid;
+    this.selected = null;
+
+    // count relationships wholly inside the subset
+    var inSet = {};
+    valid.forEach(function (k) { inSet[k] = true; });
+    var relations = 0;
+    this.model.refs.forEach(function (r) {
+      if (r.from.table === r.to.table) return;
+      if (inSet[r.from.table] && inSet[r.to.table]) relations++;
+    });
+
+    this.render();
+    this.fit();
+
+    if (this.callbacks.onSubsetChanged) {
+      this.callbacks.onSubsetChanged(valid.slice(), {
+        count: valid.length,
+        relations: relations,
+        missing: missing || []
+      });
+    }
+    return { matched: valid.slice(), missing: missing || [] };
+  };
+
   Diagram.prototype.clearFocus = function (skipRender) {
-    if (!this.focused) return;
+    if (!this.focused && !this.subset) return;
     this.focused = null;
+    this.subset = null;
     this._focusMeta = null;
     if (this.savedPositions) {
       this.positions = this.savedPositions;

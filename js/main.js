@@ -121,6 +121,16 @@
         focusBanner.classList.add('hidden');
       }
     },
+    onSubsetChanged: function (keys, info) {
+      var msg = 'Showing ' + info.count + ' table' + (info.count === 1 ? '' : 's') +
+        ': ' + keys.join(', ') + ' \u00b7 ' + info.relations +
+        ' relationship' + (info.relations === 1 ? '' : 's');
+      if (info.missing && info.missing.length) {
+        msg += ' \u00b7 not found: ' + info.missing.join(', ');
+      }
+      focusText.textContent = msg; // textContent avoids HTML injection from table names
+      focusBanner.classList.remove('hidden');
+    },
     onPositionsChanged: savePositions
   });
 
@@ -258,27 +268,45 @@
     });
   });
 
-  // search -> focus
-  searchEl.addEventListener('keydown', function (ev) {
-    if (ev.key === 'Enter') {
-      var v = searchEl.value.trim();
-      if (!v) return;
-      var t = diagram.model.tables.find(function (t) {
-        return t.key.toLowerCase() === v.toLowerCase();
-      });
-      if (t) {
-        diagram.focus(t.key);
-        searchEl.blur();
-      }
-    }
-  });
-  searchEl.addEventListener('change', function () {
-    var v = searchEl.value.trim();
-    var t = diagram.model.tables.find(function (t) {
-      return t.key.toLowerCase() === v.toLowerCase();
+  // search -> focus (single table) or subset view (comma-separated tables)
+  function findTableCI(name) {
+    return diagram.model.tables.find(function (t) {
+      return t.key.toLowerCase() === name.toLowerCase();
     });
-    if (t) diagram.focus(t.key);
+  }
+
+  function runSearch() {
+    var raw = searchEl.value.trim();
+    if (!raw) return;
+
+    var names = raw.split(',').map(function (s) { return s.trim(); })
+      .filter(function (s) { return s.length; });
+
+    // single table -> keep the existing focus behavior
+    if (names.length <= 1) {
+      var t = findTableCI(names[0] || raw);
+      if (t) { diagram.focus(t.key); searchEl.blur(); }
+      return;
+    }
+
+    // multiple tables -> show just those tables and the relationships between them
+    var matched = [];
+    var missing = [];
+    names.forEach(function (n) {
+      var tbl = findTableCI(n);
+      if (tbl) { if (matched.indexOf(tbl.key) < 0) matched.push(tbl.key); }
+      else if (missing.indexOf(n) < 0) missing.push(n);
+    });
+    if (matched.length) {
+      diagram.showSubset(matched, missing);
+      searchEl.blur();
+    }
+  }
+
+  searchEl.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Enter') runSearch();
   });
+  searchEl.addEventListener('change', runSearch);
 
   // ESC clears focus
   document.addEventListener('keydown', function (ev) {
