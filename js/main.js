@@ -168,7 +168,7 @@
   });
 
   function savePositions() {
-    if (diagram.focused) return; // don't persist temporary focus layout
+    if (diagram.focused || diagram.subset) return; // don't persist temporary focus/subset layouts
     try {
       localStorage.setItem(LS_POS, JSON.stringify(diagram.positions));
     } catch (e) { /* ignore */ }

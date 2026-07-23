@@ -260,9 +260,9 @@
 
   // Level of detail for the current zoom: full tables, header-only, or mini boxes.
   Diagram.prototype._lodForScale = function () {
-    if (this.scale >= 0.5) return 'full';
-    if (this.scale >= 0.18) return 'header';
-    return 'mini';
+    if (this.scale >= 0.25) return 'full';    // full columns
+    if (this.scale >= 0.05) return 'header';  // name band (keep names readable much longer)
+    return 'mini';                            // colored boxes only (extreme zoom-out)
   };
 
   // World-space viewport rectangle (with a one-screen margin) for culling.
@@ -729,11 +729,13 @@
 
   Diagram.prototype.focus = function (key) {
     if (!this._findTable(key)) return;
-    if (!this.focused) {
-      // save layout to restore later
+    if (!this.focused && !this.subset) {
+      // save overview layout + view to restore later
       this.savedPositions = JSON.parse(JSON.stringify(this.positions));
       this.savedView = { scale: this.scale, tx: this.tx, ty: this.ty };
     }
+    this.subset = null;
+    this.pathKeys = null;
     this.focused = key;
     this.selected = key;
 
@@ -854,23 +856,21 @@
     });
     if (!valid.length) return { matched: [], missing: missing || keys || [] };
 
-    // entering a view mode from the overview: back up the current view
+    // entering a view mode from the overview: back up the current view + layout
     if (!this.focused && !this.subset) {
       this.savedView = { scale: this.scale, tx: this.tx, ty: this.ty };
+      this.savedPositions = JSON.parse(JSON.stringify(this.positions));
     }
-    // leaving focus mode (which relocates tables): restore the real layout first
-    if (this.focused) {
-      this.focused = null;
-      this._focusMeta = null;
-      if (this.savedPositions) {
-        this.positions = this.savedPositions;
-        this.savedPositions = null;
-      }
-    }
+    // leaving focus mode: keep savedPositions (the overview backup) intact
+    this.focused = null;
+    this._focusMeta = null;
 
     this.subset = valid;
     this.selected = null;
     this.pathKeys = opts.pathHighlight ? valid.slice() : null;
+
+    // lay the subset out compactly so related tables sit close and readable
+    this._layoutSubset(valid);
 
     // count relationships wholly inside the subset
     var inSet = {};
@@ -895,6 +895,34 @@
       });
     }
     return { matched: valid.slice(), missing: missing || [] };
+  };
+
+  // Compactly position a set of tables (and their internal edges) near each
+  // other, so a searched / explored / path subset is readable instead of
+  // scattered across the full-schema layout.
+  Diagram.prototype._layoutSubset = function (keys) {
+    var self = this;
+    var items = keys.map(function (k) {
+      var t = self._findTable(k);
+      if (!t) return null;
+      var s = self._sizeOf(t);
+      return { key: k, w: s.w, h: s.h };
+    }).filter(Boolean);
+    if (!items.length) return;
+
+    var keySet = {};
+    keys.forEach(function (k) { keySet[k] = true; });
+    var edges = [];
+    this.model.refs.forEach(function (r) {
+      if (r.from.table !== r.to.table && keySet[r.from.table] && keySet[r.to.table]) {
+        edges.push({ from: r.from.table, to: r.to.table });
+      }
+    });
+
+    var pos = window.DBV.autoLayout(items, edges);
+    for (var k in pos) {
+      if (pos.hasOwnProperty(k)) this.positions[k] = pos[k];
+    }
   };
 
   // Highlight edges that connect consecutive tables along an ordered path.
