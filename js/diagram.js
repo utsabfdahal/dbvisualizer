@@ -78,6 +78,14 @@
     this._tableEls = {};
     this._enumMap = {};
 
+    // large-schema features
+    this.groupColors = {};     // key -> color (group coloring)
+    this.colorByGroup = false; // when true, header uses group color
+    this.hiddenKeys = {};      // key -> true (hidden via group toggles)
+    this.pathKeys = null;      // ordered keys of a highlighted relationship path
+    this._lod = 'full';        // 'full' | 'header' | 'mini'
+    this._revirtTimer = null;
+
     this.svg = el('svg', { xmlns: NS }, container);
     var style = el('style', null, this.svg);
     style.textContent = SVG_STYLE;
@@ -130,6 +138,10 @@
       this.subset = this.subset.filter(function (k) { return valid[k]; });
       if (!this.subset.length) this.clearFocus(true);
     }
+    // prune hidden keys for tables that no longer exist
+    Object.keys(this.hiddenKeys).forEach(function (k) {
+      if (!valid[k]) delete self.hiddenKeys[k];
+    });
     if (this.selected && !valid[this.selected]) this.selected = null;
 
     // give new tables a position
@@ -213,6 +225,7 @@
   };
 
   Diagram.prototype._headerColor = function (t, idx) {
+    if (this.colorByGroup && this.groupColors[t.key]) return this.groupColors[t.key];
     var s = t.settings || {};
     var c = s.headercolor || s.color;
     if (c) return c;
@@ -226,7 +239,9 @@
       return this.subset.filter(function (k) { return !!self._findTable(k); });
     }
     if (!this.focused) {
-      return this.model.tables.map(function (t) { return t.key; });
+      return this.model.tables.filter(function (t) {
+        return !self.hiddenKeys[t.key];
+      }).map(function (t) { return t.key; });
     }
     var set = {};
     set[this.focused] = true;
@@ -243,19 +258,39 @@
 
   // ---------------- rendering ----------------
 
-  Diagram.prototype.render = function () {
-    var self = this;
-    this.tableLayer.innerHTML = '';
-    this.edgeLayer.innerHTML = '';
-    this.labelLayer.innerHTML = '';
-    this._tableEls = {};
-    this._edgeEls = [];
-    this.geom = {};
+  // Level of detail for the current zoom: full tables, header-only, or mini boxes.
+  Diagram.prototype._lodForScale = function () {
+    if (this.scale >= 0.5) return 'full';
+    if (this.scale >= 0.18) return 'header';
+    return 'mini';
+  };
 
+  // World-space viewport rectangle (with a one-screen margin) for culling.
+  Diagram.prototype._viewportWorldRect = function (marginFactor) {
+    var rect = this.svg.getBoundingClientRect();
+    var mf = marginFactor == null ? 1 : marginFactor;
+    var mx = (rect.width / this.scale) * mf;
+    var my = (rect.height / this.scale) * mf;
+    var x0 = (-this.tx) / this.scale - mx;
+    var y0 = (-this.ty) / this.scale - my;
+    var x1 = (rect.width - this.tx) / this.scale + mx;
+    var y1 = (rect.height - this.ty) / this.scale + my;
+    return { x0: x0, y0: y0, x1: x1, y1: y1 };
+  };
+
+  Diagram.prototype.render = function () {
+    this._layout();
+    this._paint();
+  };
+
+  // Compute geometry for ALL visible tables (cheap arithmetic; needed for edges,
+  // fit and bbox even when a table is culled from the DOM).
+  Diagram.prototype._layout = function () {
+    var self = this;
+    this.geom = {};
     var visible = {};
     this.visibleKeys().forEach(function (k) { visible[k] = true; });
-
-    // geometry first
+    this._visibleMap = visible;
     this.model.tables.forEach(function (t) {
       if (!visible[t.key]) return;
       var size = self._sizeOf(t);
@@ -266,25 +301,73 @@
       });
       self.geom[t.key] = { x: pos.x, y: pos.y, w: size.w, h: size.h, rowY: rowY };
     });
+  };
 
-    // edges (under tables)
+  // Build the DOM for the current view: viewport culling + level of detail.
+  // Safe to call repeatedly after view changes without recomputing geometry.
+  Diagram.prototype._paint = function () {
+    var self = this;
+    this.tableLayer.innerHTML = '';
+    this.edgeLayer.innerHTML = '';
+    this.labelLayer.innerHTML = '';
+    this._tableEls = {};
+    this._edgeEls = [];
+
+    var visible = this._visibleMap || {};
+    var visibleList = Object.keys(this.geom);
+
+    var lod = this._lodForScale();
+    this._lod = lod;
+
+    // viewport culling is only worthwhile in the full overview
+    var cull = !this.focused && !this.subset && visibleList.length > 60;
+    var inView = {};
+    if (cull) {
+      var vr = this._viewportWorldRect(0.6);
+      visibleList.forEach(function (k) {
+        var g = self.geom[k];
+        if (!g) return;
+        if (g.x < vr.x1 && g.x + g.w > vr.x0 && g.y < vr.y1 && g.y + g.h > vr.y0) {
+          inView[k] = true;
+        }
+      });
+    } else {
+      visibleList.forEach(function (k) { inView[k] = true; });
+    }
+
+    // edges (under tables) — draw when at least one endpoint is on screen
     this.model.refs.forEach(function (r, i) {
       if (!visible[r.from.table] || !visible[r.to.table]) return;
       if (self.focused && r.from.table !== self.focused && r.to.table !== self.focused) return;
-      self._renderEdge(r, i);
+      if (!inView[r.from.table] && !inView[r.to.table]) return;
+      self._renderEdge(r, i, lod);
     });
 
-    // tables
+    // tables (idx over the model keeps palette colors stable)
     this.model.tables.forEach(function (t, idx) {
-      if (!visible[t.key]) return;
-      self._renderTable(t, idx);
+      if (!visible[t.key] || !inView[t.key]) return;
+      self._renderTable(t, idx, lod);
     });
 
     this._renderFocusLabels();
     this._applyViewTransform();
+
+    if (this.pathKeys) this._highlightPathEdges(this.pathKeys);
+    if (this._hoverKey) this._applyHover();
   };
 
-  Diagram.prototype._renderTable = function (t, idx) {
+  // Re-cull / re-LOD after the view moved (debounced to a frame). Geometry is
+  // unchanged, so only a repaint is needed.
+  Diagram.prototype._scheduleRevirtualize = function () {
+    var self = this;
+    if (this._revirtTimer) return;
+    this._revirtTimer = requestAnimationFrame(function () {
+      self._revirtTimer = null;
+      self._paint();
+    });
+  };
+
+  Diagram.prototype._renderTable = function (t, idx, lod) {
     var self = this;
     var g = this.geom[t.key];
     var grp = el('g', {
@@ -293,11 +376,22 @@
       'data-key': t.key
     }, this.tableLayer);
 
+    var hdrColor = this._headerColor(t, idx);
+
+    // ---- mini LOD: a single colored box, no text (fast overview) ----
+    if (lod === 'mini') {
+      el('rect', { class: 'tbl-box tbl-mini', width: g.w, height: g.h, rx: 6, fill: hdrColor }, grp);
+      var mtip = el('title', null, grp);
+      mtip.textContent = t.name;
+      this._tableEls[t.key] = grp;
+      this._bindTableEvents(grp, t.key);
+      return;
+    }
+
     // shadow + body
     el('rect', { class: 'tbl-box', width: g.w, height: g.h, rx: 8 }, grp);
 
     // header
-    var hdrColor = this._headerColor(t, idx);
     var hdr = el('path', {
       d: 'M0 8 a8 8 0 0 1 8 -8 h' + (g.w - 16) + ' a8 8 0 0 1 8 8 v' + (HEADER_H - 8) + ' h-' + g.w + ' z',
       fill: hdrColor
@@ -317,6 +411,13 @@
     if (t.note) {
       var tt = el('title', null, grp);
       tt.textContent = t.name + ' — ' + t.note;
+    }
+
+    // ---- header LOD: name band only, skip rows/badge ----
+    if (lod === 'header') {
+      this._tableEls[t.key] = grp;
+      this._bindTableEvents(grp, t.key);
+      return;
     }
 
     // centrality score badge
@@ -384,13 +485,16 @@
     this._bindTableEvents(grp, t.key);
   };
 
-  Diagram.prototype._edgeAnchors = function (r) {
+  Diagram.prototype._edgeAnchors = function (r, lod) {
     var a = this.geom[r.from.table];
     var b = this.geom[r.to.table];
     if (!a || !b) return null;
 
-    var ay = (a.rowY && a.rowY[r.from.column] != null) ? a.rowY[r.from.column] : a.y + HEADER_H / 2;
-    var by = (b.rowY && b.rowY[r.to.column] != null) ? b.rowY[r.to.column] : b.y + HEADER_H / 2;
+    var simple = lod && lod !== 'full';
+    var ay = simple ? a.y + HEADER_H / 2
+      : ((a.rowY && a.rowY[r.from.column] != null) ? a.rowY[r.from.column] : a.y + HEADER_H / 2);
+    var by = simple ? b.y + HEADER_H / 2
+      : ((b.rowY && b.rowY[r.to.column] != null) ? b.rowY[r.to.column] : b.y + HEADER_H / 2);
 
     var sideA, sideB;
     if (r.from.table === r.to.table) {
@@ -422,8 +526,9 @@
     }
   }
 
-  Diagram.prototype._renderEdge = function (r, idx) {
-    var pts = this._edgeAnchors(r);
+  Diagram.prototype._renderEdge = function (r, idx, lod) {
+    lod = lod || this._lod || 'full';
+    var pts = this._edgeAnchors(r, lod);
     if (!pts) return;
     var a = pts.a, b = pts.b;
 
@@ -441,6 +546,13 @@
     }
 
     el('path', { class: 'edge', d: d }, grp);
+
+    // Simplified LOD: thin line only, no hit target / dots / labels / tooltip.
+    if (lod !== 'full') {
+      this._edgeEls.push({ grp: grp, ref: r });
+      return;
+    }
+
     var hit = el('path', { class: 'edge-hit', d: d }, grp);
 
     el('circle', { class: 'edge-dot', cx: a.x, cy: a.y, r: 3.2 }, grp);
@@ -692,6 +804,7 @@
       this.tx = rect.width / 2 - (g.x + g.w / 2) * this.scale;
       this.ty = rect.height / 2 - (g.y + g.h / 2) * this.scale;
       this._applyViewTransform();
+      this._paint();
     }
   };
 
@@ -730,8 +843,9 @@
 
   // Show only the given set of tables (by exact key) plus any relationships
   // that exist between them. Positions are kept from the overview layout.
-  Diagram.prototype.showSubset = function (keys, missing) {
+  Diagram.prototype.showSubset = function (keys, missing, opts) {
     var self = this;
+    opts = opts || {};
     var seen = {};
     var valid = [];
     (keys || []).forEach(function (k) {
@@ -756,6 +870,7 @@
 
     this.subset = valid;
     this.selected = null;
+    this.pathKeys = opts.pathHighlight ? valid.slice() : null;
 
     // count relationships wholly inside the subset
     var inSet = {};
@@ -769,20 +884,56 @@
     this.render();
     this.fit();
 
+    if (opts.pathHighlight) this._highlightPathEdges(valid);
+
     if (this.callbacks.onSubsetChanged) {
       this.callbacks.onSubsetChanged(valid.slice(), {
         count: valid.length,
         relations: relations,
-        missing: missing || []
+        missing: missing || [],
+        label: opts.label || null
       });
     }
     return { matched: valid.slice(), missing: missing || [] };
+  };
+
+  // Highlight edges that connect consecutive tables along an ordered path.
+  Diagram.prototype._highlightPathEdges = function (path) {
+    var pairs = {};
+    for (var i = 0; i < path.length - 1; i++) {
+      pairs[path[i] + '\u0000' + path[i + 1]] = true;
+      pairs[path[i + 1] + '\u0000' + path[i]] = true;
+    }
+    this._edgeEls.forEach(function (e) {
+      var r = e.ref;
+      if (pairs[r.from.table + '\u0000' + r.to.table]) e.grp.classList.add('hl');
+    });
+  };
+
+  // ---- group coloring & visibility (large-schema features) ----
+  Diagram.prototype.setGroupColors = function (map, enable) {
+    this.groupColors = map || {};
+    if (enable != null) this.colorByGroup = !!enable;
+    this.render();
+  };
+
+  Diagram.prototype.setColorByGroup = function (enable) {
+    this.colorByGroup = !!enable;
+    this.render();
+  };
+
+  Diagram.prototype.setHiddenKeys = function (hiddenMap) {
+    this.hiddenKeys = hiddenMap || {};
+    if (this.focused) this.clearFocus(true);
+    this.render();
+    this.fit();
   };
 
   Diagram.prototype.clearFocus = function (skipRender) {
     if (!this.focused && !this.subset) return;
     this.focused = null;
     this.subset = null;
+    this.pathKeys = null;
     this._focusMeta = null;
     if (this.savedPositions) {
       this.positions = this.savedPositions;
@@ -796,6 +947,7 @@
         this.ty = this.savedView.ty;
         this.savedView = null;
         this._applyViewTransform();
+        this._paint();
       } else {
         this.fit();
       }
@@ -824,6 +976,7 @@
     this.svg.addEventListener('pointerup', function () {
       pan = null;
       self.svg.style.cursor = '';
+      self._scheduleRevirtualize();
     });
 
     this.svg.addEventListener('wheel', function (ev) {
@@ -861,6 +1014,7 @@
     this.ty = my - (my - this.ty) * factor;
     this.scale = ns;
     this._applyViewTransform();
+    this._scheduleRevirtualize();
   };
 
   Diagram.prototype.zoomCenter = function (factor) {
@@ -907,6 +1061,7 @@
     this.tx = (rect.width - bb.w * s) / 2 - bb.x * s;
     this.ty = (rect.height - bb.h * s) / 2 - bb.y * s;
     this._applyViewTransform();
+    this._paint();
   };
 
   // ---------------- auto layout ----------------

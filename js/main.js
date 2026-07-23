@@ -106,6 +106,35 @@
   var searchEl = document.getElementById('search');
   var datalistEl = document.getElementById('table-list');
 
+  var currentModel = null;
+  var graph = null; // window.DBV.GraphTools instance
+
+  // Explore panel elements
+  var btnExplore    = document.getElementById('btn-explore');
+  var toolsPanel    = document.getElementById('tools-panel');
+  var tpClose       = document.getElementById('tp-close');
+  var tpSearch      = document.getElementById('tp-search');
+  var searchResults = document.getElementById('tp-search-results');
+  var groupModeSel  = document.getElementById('tp-group-mode');
+  var colorGroupChk = document.getElementById('tp-color-group');
+  var tpGroupCount  = document.getElementById('tp-group-count');
+  var groupsAllBtn  = document.getElementById('tp-groups-all');
+  var groupsNoneBtn = document.getElementById('tp-groups-none');
+  var groupList     = document.getElementById('tp-group-list');
+  var tpSeed        = document.getElementById('tp-seed');
+  var depthRange    = document.getElementById('tp-depth');
+  var depthVal      = document.getElementById('tp-depth-val');
+  var directionSel  = document.getElementById('tp-direction');
+  var backboneChk   = document.getElementById('tp-backbone');
+  var backboneRange = document.getElementById('tp-backbone-deg');
+  var backboneVal   = document.getElementById('tp-backbone-val');
+  var backboneRow   = document.querySelector('.tp-backbone-row');
+  var analyzeBtn    = document.getElementById('tp-analyze');
+  var tpPathFrom    = document.getElementById('tp-path-from');
+  var tpPathTo      = document.getElementById('tp-path-to');
+  var findPathBtn   = document.getElementById('tp-find-path');
+  var pathMsg       = document.getElementById('tp-path-msg');
+
   var diagram = new window.DBV.Diagram(document.getElementById('diagram'), {
     onZoom: function (s) {
       zoomEl.textContent = Math.round(s * 100) + '%';
@@ -125,6 +154,10 @@
       var msg = 'Showing ' + info.count + ' table' + (info.count === 1 ? '' : 's') +
         ': ' + keys.join(', ') + ' \u00b7 ' + info.relations +
         ' relationship' + (info.relations === 1 ? '' : 's');
+      if (info.label) {
+        msg = info.label + ' \u2014 ' + info.count + ' table' + (info.count === 1 ? '' : 's') +
+          ' \u00b7 ' + info.relations + ' relationship' + (info.relations === 1 ? '' : 's');
+      }
       if (info.missing && info.missing.length) {
         msg += ' \u00b7 not found: ' + info.missing.join(', ');
       }
@@ -182,6 +215,9 @@
     updateSearchSuggestions();
 
     diagram.setModel(model);
+    currentModel = model;
+    graph = new window.DBV.GraphTools(model);
+    rebuildExplore();
     return model;
   }
 
@@ -328,6 +364,248 @@
   });
   searchEl.addEventListener('input', updateSearchSuggestions);
   searchEl.addEventListener('change', runSearch);
+
+  // ================= Explore panel: search, groups, impact, path =================
+  var PALETTE = [
+    '#2f6feb', '#8957e5', '#1f883d', '#bf8700', '#cf222e',
+    '#0598bc', '#d4641c', '#bf3989', '#57606a', '#3fb950',
+    '#9e6a03', '#8250df', '#1a7f37', '#a40e26', '#0969da', '#6e7781'
+  ];
+
+  var groupState = null; // { mode, groups, keyToGroup, colorFor, hidden:{name:true} }
+
+  function rebuildExplore() {
+    if (!graph) return;
+    rebuildGroups(groupModeSel.value);
+    renderGroupList();
+    if (tpSearch.value.trim()) renderSearchResults();
+  }
+
+  function rebuildGroups(mode) {
+    var prevHidden = (groupState && groupState.hidden) || {};
+    var res = graph.computeGroups(mode || 'auto');
+
+    var colorFor = {};
+    res.groups.forEach(function (g, i) { colorFor[g.name] = PALETTE[i % PALETTE.length]; });
+
+    groupState = {
+      mode: res.mode, groups: res.groups, keyToGroup: res.keyToGroup,
+      colorFor: colorFor, hidden: {}
+    };
+    // preserve hidden groups (by name) across rebuilds where the name still exists
+    Object.keys(prevHidden).forEach(function (name) {
+      if (colorFor[name] != null) groupState.hidden[name] = true;
+    });
+
+    var keyColor = {};
+    Object.keys(res.keyToGroup).forEach(function (k) {
+      keyColor[k] = colorFor[res.keyToGroup[k]];
+    });
+    diagram.setGroupColors(keyColor, colorGroupChk.checked);
+
+    var modeLabel = res.mode === 'tablegroup' ? 'by table groups'
+      : res.mode === 'schema' ? 'by schema' : 'by name prefix';
+    tpGroupCount.textContent = res.groups.length + ' modules · ' + modeLabel;
+
+    applyHidden();
+  }
+
+  function applyHidden() {
+    var hidden = {};
+    if (groupState) {
+      groupState.groups.forEach(function (g) {
+        if (groupState.hidden[g.name]) g.keys.forEach(function (k) { hidden[k] = true; });
+      });
+    }
+    diagram.setHiddenKeys(hidden);
+  }
+
+  function renderGroupList() {
+    groupList.innerHTML = '';
+    if (!groupState) return;
+    groupState.groups.forEach(function (g) {
+      var li = document.createElement('li');
+      li.className = 'tp-group-item' + (groupState.hidden[g.name] ? ' hidden-group' : '');
+
+      var left = document.createElement('div');
+      left.className = 'tp-group-left';
+      left.title = 'Isolate module: ' + g.name;
+      var sw = document.createElement('span');
+      sw.className = 'tp-group-swatch';
+      sw.style.background = groupState.colorFor[g.name];
+      left.appendChild(sw);
+      var name = document.createElement('span');
+      name.className = 'tp-group-name';
+      name.textContent = g.name;
+      left.appendChild(name);
+      left.addEventListener('click', function () {
+        diagram.showSubset(g.keys, [], { label: 'Module: ' + g.name });
+        openPanel();
+      });
+      li.appendChild(left);
+
+      var right = document.createElement('div');
+      right.className = 'tp-group-left';
+      var cnt = document.createElement('span');
+      cnt.className = 'tp-group-count';
+      cnt.textContent = g.keys.length;
+      right.appendChild(cnt);
+      var tog = document.createElement('button');
+      tog.className = 'tp-group-toggle';
+      tog.textContent = groupState.hidden[g.name] ? 'Show' : 'Hide';
+      tog.addEventListener('click', function (e) {
+        e.stopPropagation();
+        groupState.hidden[g.name] = !groupState.hidden[g.name];
+        renderGroupList();
+        applyHidden();
+      });
+      right.appendChild(tog);
+      li.appendChild(right);
+
+      groupList.appendChild(li);
+    });
+  }
+
+  function isolateGroupByName(nm) {
+    if (!groupState) return;
+    for (var i = 0; i < groupState.groups.length; i++) {
+      if (groupState.groups[i].name === nm) {
+        diagram.showSubset(groupState.groups[i].keys, [], { label: 'Module: ' + nm });
+        return;
+      }
+    }
+  }
+
+  // ---- fuzzy search ----
+  var searchDebounce = null;
+  function renderSearchResults() {
+    searchResults.innerHTML = '';
+    var q = tpSearch.value.trim();
+    if (!q || !graph) return;
+    var results = graph.search(q, 40);
+    results.forEach(function (rec) {
+      var li = document.createElement('li');
+      var kind = document.createElement('span');
+      kind.className = 'tp-kind ' + rec.kind;
+      kind.textContent = rec.kind;
+      li.appendChild(kind);
+
+      var main = document.createElement('div');
+      main.className = 'tp-res-main';
+      var label = document.createElement('div');
+      label.className = 'tp-res-label';
+      label.textContent = rec.label;
+      main.appendChild(label);
+      if (rec.sub) {
+        var sub = document.createElement('div');
+        sub.className = 'tp-res-sub';
+        sub.textContent = rec.sub;
+        main.appendChild(sub);
+      }
+      li.appendChild(main);
+
+      li.addEventListener('click', function () {
+        if (rec.kind === 'group') { isolateGroupByName(rec.label); return; }
+        if (rec.tableKey) diagram.focus(rec.tableKey);
+      });
+      searchResults.appendChild(li);
+    });
+  }
+  tpSearch.addEventListener('input', function () {
+    clearTimeout(searchDebounce);
+    searchDebounce = setTimeout(renderSearchResults, 150);
+  });
+
+  // ---- impact / neighborhood ----
+  function resolveSeed() {
+    var typed = findTableCI(tpSeed.value.trim());
+    if (typed) return typed;
+    if (diagram.focused && graph.tableByKey[diagram.focused]) return graph.tableByKey[diagram.focused];
+    if (diagram.selected && graph.tableByKey[diagram.selected]) return graph.tableByKey[diagram.selected];
+    return null;
+  }
+
+  function runAnalyze() {
+    if (!graph) return;
+    var seed = resolveSeed();
+    if (!seed) {
+      setPathMsg('Type a focus table name for the neighborhood.', 'err');
+      tpSeed.focus();
+      return;
+    }
+    var depth = parseInt(depthRange.value, 10) || 1;
+    var dir = directionSel.value;
+    var keys = graph.neighborhood(seed.key, { depth: depth, direction: dir });
+
+    if (backboneChk.checked) {
+      var minDeg = parseInt(backboneRange.value, 10) || 1;
+      keys = graph.backbone(keys, minDeg);
+      if (keys.indexOf(seed.key) < 0) keys.unshift(seed.key); // always keep the seed
+    }
+
+    var dirLabel = dir === 'in' ? 'dependents' : dir === 'out' ? 'dependencies' : 'neighbors';
+    diagram.showSubset(keys, [], {
+      label: seed.name + ' · ' + depth + '-hop ' + dirLabel +
+        (backboneChk.checked ? ' · backbone' : '')
+    });
+    setPathMsg('', '');
+  }
+
+  depthRange.addEventListener('input', function () { depthVal.textContent = depthRange.value; });
+  backboneRange.addEventListener('input', function () { backboneVal.textContent = backboneRange.value; });
+  backboneChk.addEventListener('change', function () {
+    backboneRow.classList.toggle('active', backboneChk.checked);
+  });
+  analyzeBtn.addEventListener('click', runAnalyze);
+
+  // ---- path finder ----
+  function setPathMsg(text, cls) {
+    pathMsg.textContent = text || '';
+    pathMsg.className = 'tp-msg' + (cls ? ' ' + cls : '');
+  }
+  function runPathFind() {
+    if (!graph) return;
+    var a = findTableCI(tpPathFrom.value.trim());
+    var b = findTableCI(tpPathTo.value.trim());
+    if (!a || !b) { setPathMsg('Enter two existing table names.', 'err'); return; }
+    if (a.key === b.key) { setPathMsg('Pick two different tables.', 'err'); return; }
+    var path = graph.shortestPath(a.key, b.key);
+    if (!path) { setPathMsg('No relationship path connects these tables.', 'err'); return; }
+    var hops = path.length - 1;
+    setPathMsg(path.join(' → ') + '  (' + hops + ' hop' + (hops === 1 ? '' : 's') + ')', 'ok');
+    diagram.showSubset(path, [], { pathHighlight: true, label: 'Path: ' + a.name + ' → ' + b.name });
+  }
+  findPathBtn.addEventListener('click', runPathFind);
+  [tpPathFrom, tpPathTo].forEach(function (inp) {
+    inp.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') runPathFind(); });
+  });
+
+  // ---- groups controls ----
+  groupModeSel.addEventListener('change', function () {
+    rebuildGroups(groupModeSel.value);
+    renderGroupList();
+  });
+  colorGroupChk.addEventListener('change', function () {
+    diagram.setColorByGroup(colorGroupChk.checked);
+  });
+  groupsAllBtn.addEventListener('click', function () {
+    if (!groupState) return;
+    groupState.hidden = {};
+    renderGroupList();
+    applyHidden();
+  });
+  groupsNoneBtn.addEventListener('click', function () {
+    if (!groupState) return;
+    groupState.groups.forEach(function (g) { groupState.hidden[g.name] = true; });
+    renderGroupList();
+    applyHidden();
+  });
+
+  // ---- panel open/close ----
+  function openPanel() { toolsPanel.classList.remove('collapsed'); }
+  function togglePanel() { toolsPanel.classList.toggle('collapsed'); }
+  btnExplore.addEventListener('click', togglePanel);
+  tpClose.addEventListener('click', function () { toolsPanel.classList.add('collapsed'); });
 
   // ESC clears focus
   document.addEventListener('keydown', function (ev) {

@@ -1,0 +1,4 @@
+.DS_Store
+# Local user-provided schema (kept out of the repo)
+schemafromcode.dbml
+_tmp_large.dbml

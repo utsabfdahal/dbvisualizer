@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>DBML Visualizer</title>
 <link rel="stylesheet" href="css/style.css" />
+<link rel="manifest" href="manifest.webmanifest" />
+<meta name="theme-color" content="#16181d" />
+<link rel="icon" href="icon.svg" type="image/svg+xml" />
 </head>
 <body>
   <header id="toolbar">
@@ -21,6 +24,7 @@
       <datalist id="table-list"></datalist>
     </div>
     <div class="toolbar-group">
+      <button id="btn-explore" title="Explore tools: search, groups, impact, path finder">Explore</button>
       <button id="btn-export-svg" title="Download diagram as SVG">Export SVG</button>
       <button id="btn-export-png" title="Download diagram as PNG">Export PNG</button>
       <button id="btn-sample" title="Load sample schema">Sample</button>
@@ -50,11 +54,72 @@
       <div id="diagram"></div>
       <div id="hint">Click a table to focus its relations · Esc or double-click background to show all · Drag tables · Scroll to zoom</div>
     </section>
+
+    <aside id="tools-panel" class="collapsed">
+      <div class="tp-header">
+        <span>Explore</span>
+        <button id="tp-close" title="Hide panel" aria-label="Hide panel">×</button>
+      </div>
+
+      <section class="tp-section">
+        <div class="tp-title">Search</div>
+        <input id="tp-search" type="text" placeholder="Tables, columns, notes, enums, refs…" autocomplete="off" />
+        <ul id="tp-search-results" class="tp-list"></ul>
+      </section>
+
+      <section class="tp-section">
+        <div class="tp-title">Groups <span id="tp-group-count" class="tp-dim"></span></div>
+        <div class="tp-row">
+          <select id="tp-group-mode" title="Grouping source">
+            <option value="auto">Auto</option>
+            <option value="tablegroup">Table groups</option>
+            <option value="schema">Schema</option>
+            <option value="prefix">Name prefix</option>
+          </select>
+          <label class="tp-check"><input type="checkbox" id="tp-color-group" /> Color</label>
+        </div>
+        <div class="tp-row">
+          <button id="tp-groups-all">Show all</button>
+          <button id="tp-groups-none">Hide all</button>
+        </div>
+        <ul id="tp-group-list" class="tp-list"></ul>
+      </section>
+
+      <section class="tp-section">
+        <div class="tp-title">Impact &amp; neighborhood</div>
+        <input id="tp-seed" type="text" placeholder="Focus table name" list="table-list" autocomplete="off" />
+        <div class="tp-row">
+          <label class="tp-label">Depth <b id="tp-depth-val">1</b></label>
+          <input id="tp-depth" type="range" min="1" max="5" value="1" />
+        </div>
+        <select id="tp-direction" title="Relationship direction">
+          <option value="both">Both directions</option>
+          <option value="in">Dependents — impact (who breaks)</option>
+          <option value="out">Dependencies (what it needs)</option>
+        </select>
+        <label class="tp-check"><input type="checkbox" id="tp-backbone" /> Backbone only (hide leaf tables)</label>
+        <div class="tp-row tp-backbone-row">
+          <label class="tp-label">Min links <b id="tp-backbone-val">2</b></label>
+          <input id="tp-backbone-deg" type="range" min="1" max="6" value="2" />
+        </div>
+        <button id="tp-analyze" class="tp-primary">Show neighborhood</button>
+      </section>
+
+      <section class="tp-section">
+        <div class="tp-title">Relationship path finder</div>
+        <input id="tp-path-from" type="text" placeholder="From table" list="table-list" autocomplete="off" />
+        <input id="tp-path-to" type="text" placeholder="To table" list="table-list" autocomplete="off" />
+        <button id="tp-find-path" class="tp-primary">Find shortest path</button>
+        <div id="tp-path-msg" class="tp-msg"></div>
+      </section>
+    </aside>
   </main>
 
   <script src="js/parser.js"></script>
   <script src="js/layout.js"></script>
+  <script src="js/graph-tools.js"></script>
   <script src="js/diagram.js"></script>
   <script src="js/main.js"></script>
+  <script src="js/pwa.js"></script>
 </body>
 </html>

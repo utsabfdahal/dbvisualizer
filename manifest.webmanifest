@@ -1,0 +1,13 @@
+{
+  "name": "DBVisualizer",
+  "short_name": "DBVisualizer",
+  "description": "Browser-based DBML schema visualizer, SQL data viewer, and JSON viewer. Works fully offline with no backend.",
+  "start_url": "index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#16181d",
+  "theme_color": "#16181d",
+  "icons": [
+    { "src": "icon.svg", "type": "image/svg+xml", "sizes": "any", "purpose": "any maskable" }
+  ]
+}
