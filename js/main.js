@@ -178,13 +178,8 @@
       statusEl.className = 'status ok';
     }
 
-    // table search datalist
-    datalistEl.innerHTML = '';
-    model.tables.forEach(function (t) {
-      var opt = document.createElement('option');
-      opt.value = t.key;
-      datalistEl.appendChild(opt);
-    });
+    // table search datalist (suggestions for the segment after the last comma)
+    updateSearchSuggestions();
 
     diagram.setModel(model);
     return model;
@@ -275,6 +270,31 @@
     });
   }
 
+  // Rebuild the datalist so autocomplete works for each comma-separated entry:
+  // suggestions carry the text before the last comma and append each table name,
+  // and tables already chosen in earlier segments are omitted.
+  function updateSearchSuggestions() {
+    var val = searchEl.value;
+    var commaIdx = val.lastIndexOf(',');
+    var prefix = commaIdx >= 0 ? val.slice(0, commaIdx + 1).replace(/\s*$/, '') + ' ' : '';
+
+    var used = {};
+    if (commaIdx >= 0) {
+      val.slice(0, commaIdx).split(',').forEach(function (s) {
+        var name = s.trim().toLowerCase();
+        if (name) used[name] = true;
+      });
+    }
+
+    datalistEl.innerHTML = '';
+    diagram.model.tables.forEach(function (t) {
+      if (used[t.key.toLowerCase()]) return;
+      var opt = document.createElement('option');
+      opt.value = prefix + t.key;
+      datalistEl.appendChild(opt);
+    });
+  }
+
   function runSearch() {
     var raw = searchEl.value.trim();
     if (!raw) return;
@@ -306,6 +326,7 @@
   searchEl.addEventListener('keydown', function (ev) {
     if (ev.key === 'Enter') runSearch();
   });
+  searchEl.addEventListener('input', updateSearchSuggestions);
   searchEl.addEventListener('change', runSearch);
 
   // ESC clears focus
