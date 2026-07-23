@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>JSON Viewer</title>
+<link rel="stylesheet" href="css/json-viewer.css" />
+</head>
+<body>
+  <header id="toolbar">
+    <div class="brand">DB<span>Visualizer</span></div>
+
+    <div class="toolbar-group">
+      <label id="import-label" for="file-input" title="Import a .json file">
+        Import .json
+        <input id="file-input" type="file" accept=".json,.txt,application/json" />
+      </label>
+      <button id="btn-format" type="button" title="Pretty-print JSON">Format</button>
+      <button id="btn-minify" type="button" title="Minify JSON">Minify</button>
+      <button id="btn-copy" type="button" title="Copy formatted JSON">Copy</button>
+      <button id="btn-clear" type="button" title="Clear input">Clear</button>
+      <button id="btn-sample" type="button" title="Load sample JSON">Sample</button>
+    </div>
+
+    <div class="spacer"></div>
+
+    <a class="nav-link" href="index.html">← Schema Visualizer</a>
+    <a class="nav-link" href="data-viewer.html">Table Data Viewer →</a>
+  </header>
+
+  <main id="app">
+    <section id="editor-pane">
+      <div class="pane-title">JSON
+        <span id="parse-status" class="status ok">✓</span>
+      </div>
+      <textarea id="editor" spellcheck="false" placeholder="Paste or type JSON here…"></textarea>
+      <div id="errors"></div>
+    </section>
+
+    <div id="splitter"></div>
+
+    <section id="view-pane">
+      <div class="view-toolbar">
+        <input id="search" type="text" placeholder="Filter by key or value" autocomplete="off" />
+        <div class="view-actions">
+          <button id="btn-expand" type="button" title="Expand all">Expand all</button>
+          <button id="btn-collapse" type="button" title="Collapse all">Collapse all</button>
+        </div>
+      </div>
+      <div id="tree-wrapper">
+        <div id="tree"></div>
+        <div id="tree-empty" class="tree-empty">Enter valid JSON to see the tree view.</div>
+      </div>
+      <div id="view-footer"><span id="stats"></span></div>
+    </section>
+  </main>
+
+  <script src="js/json-viewer.js"></script>
+</body>
+</html>
